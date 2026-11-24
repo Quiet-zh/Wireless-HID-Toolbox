@@ -196,6 +196,8 @@ class BatteryPanel(tk.Tk):
             ctypes.c_void_p(self.winfo_id()), 2) or 0)
         tc.write_panel_hwnd(self._hwnd)
         self._hidden = False
+        self._hiding = False
+        self._hide_pending = False
         self.after(300, self._poll_show)
         self.after(100, self._pump)
         self.bind("<Unmap>", self._on_unmap)
@@ -345,6 +347,7 @@ class BatteryPanel(tk.Tk):
                         self._update_tray_button()
                         self._hide_now()
                     else:
+                        self._hiding = False
                         self.status_label.configure(text="托盘启动失败，无法最小化",
                                                     fg=RED)
                         self.status_dot.configure(fg=RED)
@@ -433,15 +436,24 @@ class BatteryPanel(tk.Tk):
 
     def _on_unmap(self, _event=None):
         """标题栏最小化/任务栏最小化也改成缩到托盘。"""
-        if self._closing or self._hidden:
+        if self._closing or self._hidden or self._hide_pending:
             return
         try:
             if self.state() == "iconic":
-                self.after(10, self._hide_to_tray)
+                self._hide_pending = True
+                self.after(10, self._deferred_hide)
         except tk.TclError:
             pass
 
+    def _deferred_hide(self):
+        self._hide_pending = False
+        if not self._closing and not self._hidden:
+            self._hide_to_tray()
+
     def _hide_to_tray(self):
+        if self._closing or self._hiding or self._hidden:
+            return
+        self._hiding = True
         if tc.is_tray_running():
             self._hide_now()
             return
@@ -455,9 +467,12 @@ class BatteryPanel(tk.Tk):
         threading.Thread(target=worker, daemon=True).start()
 
     def _hide_now(self):
+        # 先标记 hidden，再 withdraw：避免 withdraw 产生的 <Unmap>
+        # 再次触发最小化/启动托盘，造成重复图标。
+        self._hidden = True
+        self._hiding = False
         tc.write_panel_hwnd(self._hwnd)
         self.withdraw()
-        self._hidden = True
 
     def _poll_show(self):
         if self._closing:

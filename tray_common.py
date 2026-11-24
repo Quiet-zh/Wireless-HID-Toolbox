@@ -11,6 +11,7 @@ import ctypes
 import json
 import os
 import sys
+import threading
 import time
 from ctypes import wintypes
 from typing import Optional
@@ -458,23 +459,28 @@ def consume_panel_show() -> bool:
         return False
 
 
+_START_LOCK = threading.Lock()
+
+
 def start_tray_app(wait_timeout: float = 6.0) -> bool:
     """启动托盘程序；返回托盘窗口是否真的起来了。
 
     启动前先清理"没有窗口却还占着单实例"的僵尸进程，
     启动后等托盘窗口出现（pythonw 是静默进程，只能靠窗口判断成败）。
+    加锁避免“常驻托盘”和“最小化”同时点击时重复拉起进程/图标。
     """
     import subprocess
-    if is_tray_running():
-        return True
-    cleanup_zombie()
-    try:
-        subprocess.Popen(tray_command(),
-                         cwd=os.path.dirname(sys.executable) if IS_FROZEN else BASE_DIR,
-                         creationflags=0x00000008)
-    except Exception:
-        return False
-    return wait_for_tray(wait_timeout)
+    with _START_LOCK:
+        if is_tray_running():
+            return True
+        cleanup_zombie()
+        try:
+            subprocess.Popen(tray_command(),
+                             cwd=os.path.dirname(sys.executable) if IS_FROZEN else BASE_DIR,
+                             creationflags=0x00000008)
+        except Exception:
+            return False
+        return wait_for_tray(wait_timeout)
 
 
 # --------------------------------------------------------------------------
