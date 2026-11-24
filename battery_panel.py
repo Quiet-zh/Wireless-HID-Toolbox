@@ -261,9 +261,9 @@ class BatteryPanel(tk.Tk):
             command=self._schedule_next).pack(side="left", padx=(14, 0))
         self.tray_btn = tk.Button(
             bar, text="常驻托盘", command=self._toggle_tray,
-            bg="#242a35", fg=SUB, activebackground="#2d3543",
-            activeforeground=TEXT, relief="flat", bd=0,
-            font=("Microsoft YaHei UI", 9), padx=12, pady=5,
+            bg="#1f8f4e", fg="white", activebackground="#2ecc71",
+            activeforeground="white", relief="flat", bd=0,
+            font=("Microsoft YaHei UI", 9, "bold"), padx=12, pady=5,
             cursor="hand2")
         self.tray_btn.pack(side="left", padx=(18, 0))
         tk.Button(
@@ -405,9 +405,15 @@ class BatteryPanel(tk.Tk):
     # ------------------------------------------------------------- 托盘
     def _update_tray_button(self):
         running = tc.is_tray_running()
-        self.tray_btn.configure(text="退出托盘" if running else "常驻托盘")
         if running:
+            self.tray_btn.configure(
+                text="退出托盘", bg="#5a2328", fg="#ffb4b4",
+                activebackground="#7a2d34", activeforeground="white")
             self.status_dot.configure(fg=GREEN)
+        else:
+            self.tray_btn.configure(
+                text="常驻托盘", bg="#1f8f4e", fg="white",
+                activebackground="#2ecc71", activeforeground="white")
 
     def _toggle_tray(self):
         if tc.is_tray_running():
@@ -615,7 +621,7 @@ class SettingsWindow(tk.Toplevel):
         row.pack(fill="x", padx=8, pady=8)
         self.tray_btn = tk.Button(
             row, text="启动常驻托盘", command=self._toggle_tray,
-            bg="#4f8cff", fg="white", relief="flat", bd=0,
+            bg="#1f8f4e", fg="white", relief="flat", bd=0,
             font=("Microsoft YaHei UI", 9, "bold"), padx=12, pady=4,
             cursor="hand2")
         self.tray_btn.pack(side="left")
@@ -751,7 +757,7 @@ class SettingsWindow(tk.Toplevel):
     def _refresh_tray_state(self):
         running = tc.is_tray_running()
         self.tray_btn.configure(text="退出托盘" if running else "启动常驻托盘",
-                                bg="#a33" if running else "#4f8cff")
+                                bg="#a33" if running else "#1f8f4e")
         self.tray_state.configure(text="运行中" if running else "未运行",
                                   fg=GREEN if running else FAINT)
 
