@@ -134,6 +134,22 @@ E-HUB 的显示不是即时值：它的 `batteryHandleInit` 在 60 秒内会保�
    此时动一下鼠标或按一下按键即可；工具会给出明确提示并自动重试。
 4. **不写日志**：默认不产生任何日志文件，`--debug` 才打印原始报文。
 
+## 鼠标测试面板（可视化）
+
+```bat
+python mouse_test_gui.py
+python mouse_test_gui.py --demo    :: 自动生成演示事件，预览界面
+```
+
+![鼠标测试面板](docs/mouse_test.png)
+
+- 左侧测试区域：移动时实时显示 `X/Y`，点击位置有波纹反馈，鼠标图会高亮按下的键
+- 五个按键指示：左键 / 中键 / 右键 / 后退 / 前进，按下即变色
+- 右侧滚轮计数、坐标面板（Client / Page / Screen / Offset / Movement）
+- 点击统计：总点击、双击次数、每秒点击、双击判定延时（可调）、两次点击间隔、重置
+- 键盘页签：显示按键名、VK、扫描码和最近按键；只显示，不记录、不落盘
+- 鼠标事件只统计 EWEADN 设备；键盘页签为了方便测试，接收所有键盘
+
 ## 监控按键 / 移动（Raw Input）
 
 ```bat
@@ -171,6 +187,7 @@ python mouse_events.py --all --seconds 5   :: 调试：显示所有鼠标/键盘
 | `battery_panel.py` | Tkinter 电量面板 |
 | `debug_tool.py` | 枚举 / 监听 / 发原始命令 / 唤醒检查 |
 | `mouse_events.py` | Raw Input 事件监控（按键 / 移动 / 滚轮 / 键盘） |
+| `mouse_test_gui.py` | 可视化鼠标测试面板（测试区域 / 按键指示 / 坐标 / 点击统计） |
 | `hid_win.py` | 纯 ctypes 的 Windows HID 访问层（沿用 `2.4G-battery-viewer`） |
 | `tests/test_proto.py` | 纯协议单元测试（不访问硬件） |
 

@@ -16,6 +16,7 @@ from __future__ import annotations
 import argparse
 import ctypes
 import sys
+import threading
 import time
 from ctypes import wintypes
 
@@ -196,9 +197,26 @@ user32.TranslateMessage.restype = wintypes.BOOL
 user32.TranslateMessage.argtypes = [ctypes.POINTER(wintypes.MSG)]
 user32.DispatchMessageW.restype = wintypes.LPARAM
 user32.DispatchMessageW.argtypes = [ctypes.POINTER(wintypes.MSG)]
+user32.DestroyWindow.restype = wintypes.BOOL
+user32.DestroyWindow.argtypes = [wintypes.HWND]
+
+
+class POINT(ctypes.Structure):
+    _fields_ = [("x", wintypes.LONG), ("y", wintypes.LONG)]
+
+
+user32.GetCursorPos.restype = wintypes.BOOL
+user32.GetCursorPos.argtypes = [ctypes.POINTER(POINT)]
 
 kernel32.GetModuleHandleW.restype = wintypes.HINSTANCE
 kernel32.GetModuleHandleW.argtypes = [wintypes.LPCWSTR]
+
+
+def cursor_pos():
+    pt = POINT()
+    if user32.GetCursorPos(ctypes.byref(pt)):
+        return int(pt.x), int(pt.y)
+    return 0, 0
 
 
 def _wndproc(hwnd, msg, wparam, lparam):
@@ -414,6 +432,133 @@ def run(seconds: float, accept_all: bool, show_stats: bool):
     finally:
         mon.flush_moves(force=True)
         print("监听结束。")
+
+
+def parse_mouse_report(ri):
+    """把一条 RAWMOUSE 拆成事件 dict 列表。"""
+    events = []
+    m = ri.data.mouse
+    if not (m.usFlags & MOUSE_MOVE_ABSOLUTE):
+        if m.lLastX or m.lLastY:
+            events.append({"type": "move", "dx": int(m.lLastX), "dy": int(m.lLastY)})
+    btn = m.u.bt.usButtonFlags
+    data = m.u.bt.usButtonData
+    for mask, name, action in BUTTON_EVENTS:
+        if btn & mask:
+            events.append({"type": "button", "button": name, "action": action})
+    if btn & WHEEL:
+        events.append({"type": "wheel", "delta": ctypes.c_short(data).value,
+                       "horizontal": False})
+    if btn & HWHEEL:
+        events.append({"type": "wheel", "delta": ctypes.c_short(data).value,
+                       "horizontal": True})
+    return events
+
+
+def parse_keyboard_report(ri):
+    k = ri.data.keyboard
+    if k.Message not in (0x0100, 0x0101, 0x0104, 0x0105):
+        return None
+    return {
+        "type": "key",
+        "vk": int(k.VKey),
+        "name": VK_NAMES.get(k.VKey, f"VK_0x{k.VKey:02X}"),
+        "scan": int(k.MakeCode),
+        "action": "down" if k.Message in (0x0100, 0x0104) else "up",
+    }
+
+
+class RawInputListener:
+    """在后台线程里跑 Raw Input 消息循环，通过 callback 推送事件 dict。
+
+    事件字段：type（move/button/wheel/key）、handle、eweadn、ts、screen。
+    """
+
+    def __init__(self, callback, accept_all=False):
+        self.callback = callback
+        self.accept_all = accept_all
+        self.eweadn_handles = set()
+        self.hwnd = None
+        self.error = None
+        self._buf = ctypes.create_string_buffer(256)
+        self._stop = threading.Event()
+        self._ready = threading.Event()
+        self._stopped = threading.Event()
+        self._thread = None
+
+    def start(self, timeout=3.0):
+        self._thread = threading.Thread(target=self._run, daemon=True,
+                                        name="rawinput-listener")
+        self._thread.start()
+        if not self._ready.wait(timeout):
+            raise RuntimeError("Raw Input 监听线程启动超时")
+        if self.error:
+            raise self.error
+
+    def stop(self):
+        self._stop.set()
+        if self._thread and self._thread.is_alive():
+            self._stopped.wait(1.5)
+
+    def _run(self):
+        hwnd = None
+        try:
+            hwnd = create_message_window()
+            register_devices(hwnd)
+            self.eweadn_handles = {
+                h for h, typ, name in list_raw_devices()
+                if typ in (RIM_TYPEMOUSE, RIM_TYPEKEYBOARD)
+                and VID_PID_TAG in name.lower()
+            }
+            self.hwnd = hwnd
+            self._ready.set()
+            msg = wintypes.MSG()
+            while not self._stop.is_set():
+                got = False
+                while user32.PeekMessageW(ctypes.byref(msg), None, 0, 0, PM_REMOVE):
+                    got = True
+                    if msg.message == WM_INPUT:
+                        self._process(msg.lParam)
+                    else:
+                        user32.TranslateMessage(ctypes.byref(msg))
+                        user32.DispatchMessageW(ctypes.byref(msg))
+                if not got:
+                    time.sleep(0.001)
+        except Exception as exc:  # noqa: BLE001 - 交给主线程处理
+            self.error = exc
+            self._ready.set()
+        finally:
+            if hwnd:
+                user32.DestroyWindow(hwnd)
+            self._stopped.set()
+
+    def _process(self, lparam):
+        size = wintypes.UINT(len(self._buf))
+        got = user32.GetRawInputData(lparam, RID_INPUT, self._buf,
+                                     ctypes.byref(size),
+                                     ctypes.sizeof(RAWINPUTHEADER))
+        if got in (0, 0xFFFFFFFF) or got > len(self._buf):
+            return
+        ri = ctypes.cast(self._buf, ctypes.POINTER(RAWINPUT)).contents
+        handle = int(ri.header.hDevice or 0)
+        is_eweadn = handle in self.eweadn_handles
+        if not self.accept_all and not is_eweadn:
+            return
+        base = {
+            "handle": handle,
+            "eweadn": is_eweadn,
+            "screen": cursor_pos(),
+            "ts": time.time(),
+        }
+        if ri.header.dwType == RIM_TYPEMOUSE:
+            for ev in parse_mouse_report(ri):
+                ev.update(base)
+                self.callback(ev)
+        elif ri.header.dwType == RIM_TYPEKEYBOARD:
+            ev = parse_keyboard_report(ri)
+            if ev:
+                ev.update(base)
+                self.callback(ev)
 
 
 def list_devices():
