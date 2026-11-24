@@ -29,7 +29,8 @@ RED = "#ff5c7a"
 ACCENT = "#4f8cff"
 ACCENT_KB = "#a78bfa"
 
-INTERVALS = {"30 秒": 30, "60 秒": 60, "2 分钟": 120, "5 分钟": 300}
+INTERVALS = {"30 秒": 30, "60 秒": 60, "2 分钟": 120, "5 分钟": 300,
+             "10 分钟": 600, "30 分钟": 1800}
 
 
 def level_color(percent: int) -> str:
