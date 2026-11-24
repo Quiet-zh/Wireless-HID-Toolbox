@@ -178,6 +178,27 @@ python mouse_events.py --all --seconds 5   :: 调试：显示所有鼠标/键盘
 - 纯厂商自定义、不映射到标准 HID 的按键（例如只在 `0xFF06/0x0002` 私有集合里上报的
   配置态数据），还需要像电量一样对私有报文做逆向；标准键鼠事件已经覆盖。
 
+## 键盘电量（PMO WAVE75）
+
+```bat
+python keyboard_battery.py --once
+python keyboard_battery.py --json
+python keyboard_battery.py --watch 30
+```
+
+协议与 PMO HUB 2.1.1 / Linux `hid-rdmctmzt` 驱动一致：`AA 10` 开会话、
+`AA 30` 读电量、`AA 11` 结束；回复第 8 字节是电量、第 9 字节是充电状态。
+
+**两个前提：**
+
+1. **USB 有线模式**（PID `0x3009`）。2.4G dongle（PID `0x3002`）只转发键鼠 HID，
+   不转发厂商命令——官方 PMO 驱动和 VIA 在 2.4G 下也连不上键盘。
+2. **PMO HUB 官方固件**。QMK/VIA 固件虽然能用 usevia.app 改键，但固件里没有
+   主机侧电量命令（VIA `get_keyboard_value` id 5 返回 `0xFF`，custom 通道 2/3
+   只是灯效），只能用 `Fn+Backspace` 看数字键灯。
+
+当前如果检测到 QMK/VIA 固件，`keyboard_battery.py` 会直接说明原因，不会误报 100%。
+
 ## 目录结构
 
 | 文件 | 说明 |
@@ -188,6 +209,8 @@ python mouse_events.py --all --seconds 5   :: 调试：显示所有鼠标/键盘
 | `debug_tool.py` | 枚举 / 监听 / 发原始命令 / 唤醒检查 |
 | `mouse_events.py` | Raw Input 事件监控（按键 / 移动 / 滚轮 / 键盘） |
 | `mouse_test_gui.py` | 可视化鼠标测试面板（测试区域 / 按键指示 / 坐标 / 点击统计） |
+| `pmo_proto.py` | PMO WAVE75 键盘电量协议（USB / PMO 固件） |
+| `keyboard_battery.py` | 键盘电量命令行入口 |
 | `hid_win.py` | 纯 ctypes 的 Windows HID 访问层（沿用 `2.4G-battery-viewer`） |
 | `tests/test_proto.py` | 纯协议单元测试（不访问硬件） |
 
@@ -198,7 +221,8 @@ python -m unittest discover -s tests -v
 ```
 
 8 个用例覆盖：真机抓包帧的校验和、报文归一化、电量解析、电压曲线、单调性；
-另外 5 个用例覆盖 Raw Input 的移动 / 按键 / 滚轮 / 键盘事件解析，共 13 个。
+另外 5 个用例覆盖 Raw Input 的移动 / 按键 / 滚轮 / 键盘事件解析；
+再加 4 个用例覆盖 PMO 键盘报文构造与电量数据，共 17 个。
 
 ## 逆向过程（简述）
 
