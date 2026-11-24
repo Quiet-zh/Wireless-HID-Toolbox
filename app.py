@@ -23,6 +23,7 @@ from tkinter import ttk
 
 import hid_win as hw
 import window_behavior as wb
+from version import __version__
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 CAL_PATH = os.path.join(BASE_DIR, "calibration.json")
@@ -40,7 +41,7 @@ def parse_hex(text: str) -> bytes:
 class DebugApp(tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title("外设 HID 调试台")
+        self.title(f"外设 HID 调试台 v{__version__}")
         self.geometry("1220x780")
         self.minsize(1000, 680)
         self.configure(bg="#f4f5f8")

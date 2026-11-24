@@ -21,6 +21,7 @@ from tkinter import messagebox, ttk
 import mouse_events as me
 import window_behavior as wb
 from keyboard_view import KeyboardView
+from version import __version__
 
 BG = "#f4f5fa"
 CARD = "#ffffff"
@@ -114,7 +115,7 @@ class MouseTestApp(tk.Tk):
         self.pad_xy = None
         self.pressed_buttons = set()
 
-        self.title("鼠标键盘测试")
+        self.title(f"鼠标键盘测试 v{__version__}")
         self.geometry("1180x760")
         self.minsize(1000, 680)
         self.configure(bg=BG)

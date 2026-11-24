@@ -170,7 +170,7 @@ class BatteryPanel(tk.Tk):
     def __init__(self, demo: bool = False):
         super().__init__()
         self.demo = demo
-        self.title("外设电量")
+        self.title(tc.UI_TITLE)
         self.geometry("940x700")
         self.minsize(880, 620)
         self.configure(bg=BG)
@@ -696,7 +696,7 @@ class SettingsWindow(tk.Toplevel):
         self.parent = parent
         self.demo = demo
         self.on_change = on_change
-        self.title("外设电量 · 设置")
+        self.title(f"{tc.UI_TITLE} · 设置")
         self.geometry("660x860")
         self.minsize(620, 700)
         self.configure(bg=BG)

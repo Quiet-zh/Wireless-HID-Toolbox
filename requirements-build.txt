@@ -1,2 +1,2 @@
 # 仅打包用；运行程序本身仍零第三方依赖。
-pyinstaller>=6.0
+pyinstaller>=6.10,<7

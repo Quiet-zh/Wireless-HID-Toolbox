@@ -39,6 +39,7 @@ import hid_win as hw
 import device_registry as dr
 import win_icon
 import tray_common as tc
+from version import __version__
 
 BASE_DIR = tc.BASE_DIR
 APP_NAME = tc.APP_NAME
@@ -407,11 +408,17 @@ def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description="托盘电量监视器")
     parser.add_argument("--debug", action="store_true", help="前台运行并输出日志")
     parser.add_argument("--status", action="store_true", help="打印当前状态")
+    parser.add_argument("--version", action="store_true", help="打印版本")
     parser.add_argument("--quit", action="store_true", help="让正在运行的实例退出")
     args = parser.parse_args(argv)
 
+    if args.version:
+        print(f"Wireless HID Toolbox v{__version__}")
+        return 0
+
     if args.status:
         cfg = tc.load_config()
+        print("版本：", __version__)
         print("配置：", json.dumps(cfg, ensure_ascii=False))
         for key, meta in (cfg.get("devices") or {}).items():
             if not isinstance(meta, dict):

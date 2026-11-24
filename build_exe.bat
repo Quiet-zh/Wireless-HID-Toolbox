@@ -10,8 +10,16 @@ if errorlevel 1 (
   exit /b 1
 )
 
-python -m PyInstaller --noconfirm --clean --onefile --noconsole ^
+python -m PyInstaller --noconfirm --clean --onedir --noconsole --optimize 2 ^
   --name WirelessHIDToolbox ^
+  --icon app.ico ^
+  --version-file version_info.txt ^
+  --distpath dist --workpath build ^
+  --exclude-module unittest ^
+  --exclude-module doctest ^
+  --exclude-module pydoc ^
+  --exclude-module pdb ^
+  --exclude-module test ^
   --hidden-import battery_panel ^
   --hidden-import tray_app ^
   --hidden-import mouse_test_gui ^
@@ -31,6 +39,7 @@ python -m PyInstaller --noconfirm --clean --onefile --noconsole ^
   --hidden-import win_icon ^
   --hidden-import win_link ^
   --hidden-import win_shell ^
+  --hidden-import version ^
   main.py
 
 if errorlevel 1 (
@@ -40,6 +49,7 @@ if errorlevel 1 (
 )
 
 echo.
-echo 打包完成: dist\WirelessHIDToolbox.exe
+echo 打包完成: dist\WirelessHIDToolbox\WirelessHIDToolbox.exe
+echo 分发时请整个 dist\WirelessHIDToolbox 文件夹一起打包。
 echo 双击 exe 会直接打开主显示界面。
 pause

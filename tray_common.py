@@ -18,6 +18,7 @@ from typing import Optional
 
 import win_link
 import win_shell
+from version import __version__
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 IS_FROZEN = bool(getattr(sys, "frozen", False))
@@ -46,7 +47,7 @@ WND_CLASS = "ExtBatteryTrayWnd"
 MUTEX_NAME = "Global\\ExtBatteryTray_single_instance"
 
 # 界面标题（托盘用它来找到已打开的窗口）
-UI_TITLE = "外设电量"
+UI_TITLE = f"外设电量 v{__version__}"
 
 DEFAULT_CONFIG = {
     "interval": 60,        # 托盘轮询间隔（秒）

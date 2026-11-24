@@ -1,5 +1,7 @@
 # Wireless HID Toolbox（2.4G 外设工具箱）
 
+当前版本：**v1.0.0**（更新记录见 [CHANGELOG.md](CHANGELOG.md)）
+
 Windows 10/11 的 2.4G 无线外设电量与 HID 调试工具箱。纯 Python 标准库 +
 `ctypes` + `tkinter`，运行时不依赖任何第三方库。
 
@@ -18,7 +20,7 @@ Windows 10/11 的 2.4G 无线外设电量与 HID 调试工具箱。纯 Python �
 ## 支持的设备与协议
 
 | 协议 / 方案 | 识别方式 | 电量位置 |
-|---|---|---|
+| --- | --- | --- |
 | EWEADN 8K（本机） | `3554:F517`，`0xFF02`，17B | `[5]`，电压曲线 |
 | PMO WAVE75（本机） | `36B0:3002/3009`，`0xFF60` | `[8]`，RDR `AA 30` |
 | 罗技 G304 / HID++ | `046D:C53F`，HID++ 2.0 | `0x1000/0x1004` |
@@ -51,6 +53,7 @@ Windows 10/11 的 2.4G 无线外设电量与 HID 调试工具箱。纯 Python �
 cd D:\zh\DeepSeekHarness\HUB\Wireless-HID-Toolbox
 
 python main.py                    :: 主界面（默认）
+python main.py --version          :: 版本号
 python main.py --tool tray        :: 托盘
 python main.py --tool mouse-test  :: 鼠标键盘测试
 python main.py --tool hid-debug   :: HID 调试台
@@ -72,14 +75,20 @@ build_exe.bat
 产物：
 
 ```text
-dist\WirelessHIDToolbox.exe
+dist\WirelessHIDToolbox\WirelessHIDToolbox.exe
 ```
 
 - **双击 exe 直接打开主界面**；
 - 设置里的鼠标键盘测试、HID 调试台、托盘通过 `exe --tool ...` 打开，
   不依赖外部 `.py` 文件；
 - 开机自启/桌面入口在 exe 模式下指向 exe 本身；
+- 打包启用 `--optimize 2`、无用的标准库排除、`app.ico` 图标和
+  `version_info.txt` 版本资源；
 - PyInstaller 只用于打包，运行程序本身仍然零第三方依赖。
+
+默认打 **onedir 文件夹版**：启动快、不需要每次解压，分发时把
+`dist\WirelessHIDToolbox` 整个文件夹一起打包即可。如果必须单文件，
+把脚本里的 `--onedir` 改成 `--onefile`，首次启动会先解压到临时目录，速度稍慢。
 
 ## 主界面
 
@@ -242,7 +251,7 @@ python -m unittest discover -s tests -v
 ## 验收自检（本机实测）
 
 | 项目 | 结果 |
-|---|---|
+| --- | --- |
 | `my_devices.py --once` | 鼠标 84%（缓存/唤醒后即时）+ 键盘 58% |
 | 主界面 | EWEADN / PMO / 罗技 G304 三张卡片，字段统一 |
 | 每设备托盘开关 | G304 关→`NIM_DELETE`，开→`NIM_ADD` |
@@ -265,7 +274,7 @@ python -m unittest discover -s tests -v
 HID 访问层与托盘/快捷方式基础模块来自
 [2.4G-battery-viewer](../2.4G-battery-viewer)；托盘图标、上次电量缓存、
 `--list/--install/--panel` 等交互参考了
-[EZ2.4G](https://github.com/Ap0LoG1zE/EZ2.4G)（MIT）。
+[EZ2.4G](https://github.com/Ap0LoG1zE/EZ2.4G)（MIT）；`app.ico` 也来自该仓库。
 
 多厂商协议参数来自公开资料：
 [sdparklab/Voltide](https://github.com/sdparklab/Voltide)（MIT）、
