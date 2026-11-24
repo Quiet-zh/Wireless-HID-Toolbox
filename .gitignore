@@ -9,3 +9,4 @@ calibration.json
 build/
 dist/
 *.spec
+tmp_onefile/

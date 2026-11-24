@@ -71,15 +71,28 @@ python generic_scan.py --list     :: 看本机设备命中了哪些协议
 
 ```bat
 python -m pip install -r requirements-build.txt
+
+:: 默认：onefile 单文件
 build_exe.bat
+
+:: 选择文件夹模式
+build_exe.bat onedir
+
+:: 显式选择单文件
+build_exe.bat onefile
 ```
+
+也可以不带参数运行 `build_exe.bat`，按提示选择 `[1] onefile` 或 `[2] onedir`。
 
 产物：
 
 ```text
-dist\WirelessHIDToolbox\WirelessHIDToolbox.exe
+onefile: dist\WirelessHIDToolbox.exe
+onedir:  dist\WirelessHIDToolbox\WirelessHIDToolbox.exe
 ```
 
+- **默认 onefile**，分发只需要一个 exe；首次启动会解压到临时目录，稍慢
+- onedir 文件夹模式启动更快，分发时把整个 `dist\WirelessHIDToolbox` 一起打包
 - **双击 exe 直接打开主界面**；
 - 设置里的鼠标键盘测试、HID 调试台、托盘通过 `exe --tool ...` 打开，
   不依赖外部 `.py` 文件；
@@ -87,10 +100,6 @@ dist\WirelessHIDToolbox\WirelessHIDToolbox.exe
 - 打包启用 `--optimize 2`、无用的标准库排除、`app.ico` 图标和
   `version_info.txt` 版本资源；
 - PyInstaller 只用于打包，运行程序本身仍然零第三方依赖。
-
-默认打 **onedir 文件夹版**：启动快、不需要每次解压，分发时把
-`dist\WirelessHIDToolbox` 整个文件夹一起打包即可。如果必须单文件，
-把脚本里的 `--onedir` 改成 `--onefile`，首次启动会先解压到临时目录，速度稍慢。
 
 ## 主界面
 
