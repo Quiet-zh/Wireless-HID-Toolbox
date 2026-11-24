@@ -398,15 +398,21 @@ class BatteryPanel(tk.Tk):
     # ------------------------------------------------------------- 托盘
     def _update_tray_button(self):
         running = tc.is_tray_running()
+        current = self.status_label.cget("text")
         if running:
             self.tray_btn.configure(
                 text="退出托盘", bg="#5a2328", fg="#ffb4b4",
                 activebackground="#7a2d34", activeforeground="white")
             self.status_dot.configure(fg=GREEN)
+            if current.startswith("正在退出"):
+                self.status_label.configure(text="托盘仍在运行", fg=AMBER)
         else:
             self.tray_btn.configure(
                 text="常驻托盘", bg="#1f8f4e", fg="white",
                 activebackground="#2ecc71", activeforeground="white")
+            if current.startswith("正在退出") or current.startswith("托盘仍在"):
+                self.status_label.configure(text="托盘已退出", fg=FAINT)
+                self.status_dot.configure(fg=FAINT)
 
     def _toggle_tray(self):
         if tc.is_tray_running():
