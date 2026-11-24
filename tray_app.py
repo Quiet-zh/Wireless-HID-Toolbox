@@ -41,6 +41,7 @@ import eweadn_proto as mouse_proto
 import pmo_proto as kb_proto
 import win_icon
 import tray_common as tc
+import last_state
 
 BASE_DIR = tc.BASE_DIR
 APP_NAME = tc.APP_NAME
@@ -164,22 +165,33 @@ TRAY_ICONS = [
 # --------------------------------------------------------------------------
 # 设备读取（轻量版）
 # --------------------------------------------------------------------------
-def read_mouse() -> tuple[Optional[int], str]:
+def _stale_or(key: str, error: str):
+    last = last_state.fallback(key, error)
+    if last:
+        return last["percent"], last_state.age_text(last["ts"]), last["ts"]
+    return None, error, None
+
+
+def read_mouse() -> tuple[Optional[int], str, Optional[float]]:
     try:
-        return mouse_proto.read_battery(retries=1).percent, ""
+        reading = mouse_proto.read_battery(retries=1)
+        last_state.save("mouse", reading.percent, "ok")
+        return reading.percent, "", None
     except mouse_proto.EweadnError as exc:
-        return None, str(exc).splitlines()[0]
+        return _stale_or("mouse", str(exc).splitlines()[0])
     except Exception as exc:  # noqa: BLE001
-        return None, f"读取失败：{exc}"
+        return _stale_or("mouse", f"读取失败：{exc}")
 
 
-def read_keyboard() -> tuple[Optional[int], str]:
+def read_keyboard() -> tuple[Optional[int], str, Optional[float]]:
     try:
-        return kb_proto.read_battery(retries=1).percent, ""
+        reading = kb_proto.read_battery(retries=1)
+        last_state.save("keyboard", reading.percent, "ok")
+        return reading.percent, "", None
     except kb_proto.PmoError as exc:
-        return None, str(exc).splitlines()[0]
+        return _stale_or("keyboard", str(exc).splitlines()[0])
     except Exception as exc:  # noqa: BLE001
-        return None, f"读取失败：{exc}"
+        return _stale_or("keyboard", f"读取失败：{exc}")
 
 
 # --------------------------------------------------------------------------
@@ -192,7 +204,7 @@ class TrayApp:
         self.hwnd: Optional[int] = None
         self.wndproc_ref = None
         self.busy = False
-        self.levels = {k: (None, "正在读取…") for _, k, _, _ in TRAY_ICONS}
+        self.levels = {k: (None, "正在读取…", None) for _, k, _, _ in TRAY_ICONS}
         self.icons_added = False
         self.taskbar_created_msg = USER32.RegisterWindowMessageW("TaskbarCreated")
         self.msg_quit = USER32.RegisterWindowMessageW(tc.MSG_QUIT)
@@ -211,8 +223,8 @@ class TrayApp:
 
     # ---- 图标 ----------------------------------------------------------
     @staticmethod
-    def _color(level: Optional[int]) -> tuple[int, int, int]:
-        if level is None:
+    def _color(level: Optional[int], stale: bool = False) -> tuple[int, int, int]:
+        if level is None or stale:
             return (150, 155, 160)
         if level >= 60:
             return (93, 220, 138)
@@ -231,12 +243,19 @@ class TrayApp:
 
     def _apply_icon(self, action: int, uID: int, key: str, title: str,
                     plate: bool) -> bool:
-        level, err = self.levels[key]
+        level, err, stale_ts = self.levels[key]
         text = str(level) if level is not None else "--"
         nid = self._nid(uID)
-        nid.hIcon = win_icon.make_hicon(text, self._color(level), plate)
-        nid.szTip = (f"{title}：{level}%（{time.strftime('%H:%M:%S')} 更新）"
-                     if level is not None else f"{title}：{err or '未知'}")
+        nid.hIcon = win_icon.make_hicon(
+            text, self._color(level, stale=stale_ts is not None), plate)
+        if level is None:
+            tip = f"{title}：{err or '未知'}"
+        elif stale_ts is not None:
+            tip = (f"{title}：{level}%"
+                   f"（上次更新 {last_state.stamp(stale_ts)}）")
+        else:
+            tip = f"{title}：{level}%（{time.strftime('%H:%M:%S')} 更新）"
+        nid.szTip = tip
         return bool(SHELL32.Shell_NotifyIconW(action, ctypes.byref(nid)))
 
     def add_icons(self) -> None:

@@ -18,8 +18,22 @@ import win_link
 import win_shell
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-CONFIG_PATH = os.path.join(BASE_DIR, "tray_config.json")
-PID_FILE = os.path.join(BASE_DIR, "tray_pid.txt")
+
+
+def _runtime_dir() -> str:
+    root = os.environ.get("APPDATA") or BASE_DIR
+    path = os.path.join(root, "ExtBatteryTray")
+    try:
+        os.makedirs(path, exist_ok=True)
+    except OSError:
+        path = BASE_DIR
+    return path
+
+
+RUNTIME_DIR = _runtime_dir()
+CONFIG_PATH = os.path.join(RUNTIME_DIR, "config.json")
+PID_FILE = os.path.join(RUNTIME_DIR, "tray_pid.txt")
+LEGACY_CONFIG_PATH = os.path.join(BASE_DIR, "tray_config.json")
 
 APP_NAME = "ExtBatteryTray"
 WND_CLASS = "ExtBatteryTrayWnd"
@@ -59,8 +73,11 @@ USER32.SetForegroundWindow.argtypes = [ctypes.c_void_p]
 # --------------------------------------------------------------------------
 def load_config() -> dict:
     cfg = dict(DEFAULT_CONFIG)
+    path = CONFIG_PATH
+    if not os.path.exists(path) and os.path.exists(LEGACY_CONFIG_PATH):
+        path = LEGACY_CONFIG_PATH
     try:
-        with open(CONFIG_PATH, "r", encoding="utf-8") as f:
+        with open(path, "r", encoding="utf-8") as f:
             data = json.load(f)
         if isinstance(data, dict):
             for k in DEFAULT_CONFIG:
@@ -68,14 +85,18 @@ def load_config() -> dict:
                     cfg[k] = data[k]
     except Exception:
         pass
+    if path != CONFIG_PATH:
+        save_config(cfg)                    # 旧版项目内配置迁移到 %APPDATA%
     return cfg
 
 
 def save_config(cfg: dict) -> None:
     clean = {k: cfg.get(k, DEFAULT_CONFIG[k]) for k in DEFAULT_CONFIG}
     try:
-        with open(CONFIG_PATH, "w", encoding="utf-8") as f:
+        tmp = CONFIG_PATH + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
             json.dump(clean, f, ensure_ascii=False, indent=2)
+        os.replace(tmp, CONFIG_PATH)
     except OSError:
         pass
 

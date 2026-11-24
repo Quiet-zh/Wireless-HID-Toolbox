@@ -16,6 +16,7 @@ from tkinter import ttk
 import eweadn_proto as mouse_proto
 import pmo_proto as kb_proto
 import tray_common as tc
+import last_state
 
 BG = "#0f1115"
 CARD = "#171a21"
@@ -107,6 +108,17 @@ class DeviceCard(tk.Frame):
             lab_w.configure(text=label)
             val_w.configure(text=value)
         self.time_label.configure(text=time_text)
+
+    def update_stale(self, percent: int, reason: str, stamp_text: str,
+                     info: list[tuple[str, str]]):
+        self.percent_label.configure(text=f"{percent}%", fg="#7d8499")
+        self.state_label.configure(text=f"{reason} · 上次更新 {stamp_text}", fg=AMBER)
+        self.bar.coords(self._bar_fill, 0, 0, 360 * percent / 100.0, 13)
+        self.bar.itemconfigure(self._bar_fill, fill="#5d6675")
+        for (label, value), (lab_w, val_w) in zip(info, self.info_values):
+            lab_w.configure(text=label)
+            val_w.configure(text=value)
+        self.time_label.configure(text="缓存值 · 设备唤醒后自动更新", fg=FAINT)
 
     def update_error(self, message: str, hint: str = ""):
         self.percent_label.configure(text="--", fg=FAINT)
@@ -230,6 +242,12 @@ class BatteryPanel(tk.Tk):
                   bg="#242a35", fg=SUB, activebackground="#2d3543",
                   activeforeground=TEXT, relief="flat", bd=0,
                   font=("Microsoft YaHei UI", 9), padx=10, pady=3,
+                  cursor="hand2").pack(side="left", padx=(0, 6))
+
+        tk.Button(controls, text="最小化", command=self.iconify,
+                  bg="#242a35", fg=SUB, activebackground="#2d3543",
+                  activeforeground=TEXT, relief="flat", bd=0,
+                  font=("Microsoft YaHei UI", 9), padx=10, pady=3,
                   cursor="hand2").pack(side="left")
 
         self.status_dot = tk.Label(controls, text="●", bg=BG, fg=FAINT,
@@ -251,17 +269,24 @@ class BatteryPanel(tk.Tk):
         threading.Thread(target=self._worker, daemon=True).start()
 
     def _worker(self):
-        result = {"mouse": None, "kb": None, "mouse_err": None, "kb_err": None}
+        result = {"mouse": None, "kb": None, "mouse_err": None, "kb_err": None,
+                  "mouse_last": None, "kb_last": None}
         try:
-            result["mouse"] = mouse_proto.read_battery(retries=2)
+            reading = mouse_proto.read_battery(retries=2)
+            last_state.save("mouse", reading.percent, "ok")
+            result["mouse"] = reading
         except mouse_proto.EweadnError as exc:
             result["mouse_err"] = str(exc)
+            result["mouse_last"] = last_state.fallback("mouse", str(exc))
         except Exception as exc:  # noqa: BLE001
             result["mouse_err"] = f"未知错误：{exc}"
         try:
-            result["kb"] = kb_proto.read_battery(retries=2)
+            reading = kb_proto.read_battery(retries=2)
+            last_state.save("keyboard", reading.percent, "ok")
+            result["kb"] = reading
         except kb_proto.PmoError as exc:
             result["kb_err"] = str(exc)
+            result["kb_last"] = last_state.fallback("keyboard", str(exc))
         except Exception as exc:  # noqa: BLE001
             result["kb_err"] = f"未知错误：{exc}"
         self._queue.put(result)
@@ -314,9 +339,16 @@ class BatteryPanel(tk.Tk):
                 f"更新于 {stamp} · HID 0xFF02/0x0002")
         else:
             msg = (result.get("mouse_err") or "读取失败").splitlines()[0]
-            self.mouse_card.update_error(
-                _short_mouse(msg),
-                "动一下鼠标或按一下按键唤醒" if "休眠" in msg or "未连接" in msg else "")
+            last = result.get("mouse_last")
+            if last:
+                at = last_state.stamp(last["ts"])
+                self.mouse_card.update_stale(
+                    last["percent"], "鼠标休眠", at,
+                    [("电压", "--"), ("状态", "休眠"), ("上次更新", at)])
+            else:
+                self.mouse_card.update_error(
+                    _short_mouse(msg),
+                    "动一下鼠标或按一下按键唤醒" if "休眠" in msg or "未连接" in msg else "")
 
         kb = result.get("kb")
         if kb:
@@ -332,13 +364,22 @@ class BatteryPanel(tk.Tk):
                 f"更新于 {stamp} · HID 0xFF60/0x0061")
         else:
             msg = (result.get("kb_err") or "读取失败").splitlines()[0]
-            self.kb_card.update_error(_short_kb(msg), "键盘休眠或当前固件不支持")
+            last = result.get("kb_last")
+            if last:
+                at = last_state.stamp(last["ts"])
+                self.kb_card.update_stale(
+                    last["percent"], "键盘休眠", at,
+                    [("连接", "--"), ("充电", "休眠"), ("上次更新", at)])
+            else:
+                self.kb_card.update_error(_short_kb(msg), "键盘休眠或当前固件不支持")
 
         any_ok = bool(mouse or kb)
-        any_err = bool(result.get("mouse_err") or result.get("kb_err"))
-        if any_ok:
-            self.status_dot.configure(fg=GREEN if not any_err else AMBER)
-            self.status_label.configure(text=f"已更新 {stamp}", fg=FAINT)
+        stale = bool(result.get("mouse_last") or result.get("kb_last"))
+        if any_ok or stale:
+            self.status_dot.configure(fg=AMBER if stale else GREEN)
+            self.status_label.configure(
+                text="部分设备休眠，显示上次电量" if stale else f"已更新 {stamp}",
+                fg=AMBER if stale else FAINT)
         else:
             self.status_dot.configure(fg=RED)
             self.status_label.configure(text="设备暂时没有响应", fg=RED)
@@ -373,6 +414,9 @@ class BatteryPanel(tk.Tk):
             self.status_label.configure(text=f"开机自启设置失败：{exc}", fg=RED)
         actual = tc.is_autostart_enabled()
         self.autostart_var.set(actual)
+        cfg = tc.load_config()
+        cfg["autostart"] = actual
+        tc.save_config(cfg)
         self.status_label.configure(
             text="开机自启已开启" if actual else "开机自启已关闭",
             fg=GREEN if actual else FAINT)

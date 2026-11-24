@@ -10,11 +10,17 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
+import subprocess
 import sys
 import time
 
 import eweadn_proto as mouse_proto
 import pmo_proto as kb_proto
+import hid_win
+import tray_common as tc
+
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 
 def read_once(debug: bool = False) -> dict:
@@ -47,13 +53,58 @@ def _kb_line(result) -> str:
             f"（{result.charging_text}，{link}）")
 
 
+def list_devices() -> int:
+    items = hid_win.enumerate_hid()
+    print(f"{len(items)} 个 HID 接口：")
+    for it in items:
+        print(f"{it.vid:04X}:{it.pid:04X}  "
+              f"usage=0x{it.usage_page:04X}:0x{it.usage:04X}  "
+              f"in/out/feat={it.input_len}/{it.output_len}/{it.feature_len}  "
+              f"{it.product or '(无产品名)'}  {it.path}")
+    return 0
+
+
+def install() -> int:
+    tc.set_autostart(True)
+    result = tc.install_desktop_links()
+    status = tc.autostart_status()
+    cfg = tc.load_config()
+    cfg["autostart"] = status["enabled"]
+    tc.save_config(cfg)
+    print("开机自启：", "已启用" if status["enabled"] else "未启用")
+    print("启动项：", status["shortcut"])
+    print("桌面：", "目录", result.get("folder") or "失败")
+    for name, kind in (result.get("links") or {}).items():
+        print(f"      {name} -> {kind}")
+    for err in result.get("errors") or []:
+        print("  错误：", err)
+    return 0
+
+
+def open_panel() -> int:
+    subprocess.Popen([tc.pythonw_path(), os.path.join(BASE_DIR, "battery_panel.py")],
+                     cwd=BASE_DIR, creationflags=0x00000008)
+    print("已打开电量面板")
+    return 0
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description="读取 EWEADN 8K 鼠标 / PMO WAVE75 键盘电量")
     parser.add_argument("--once", action="store_true", help="读一次后退出（默认）")
     parser.add_argument("--json", action="store_true", help="以 JSON 输出")
     parser.add_argument("--watch", type=float, metavar="SECONDS", help="循环读取间隔")
     parser.add_argument("--debug", action="store_true", help="打印读取过程")
+    parser.add_argument("--list", action="store_true", help="列出所有 HID 接口")
+    parser.add_argument("--panel", action="store_true", help="打开电量面板")
+    parser.add_argument("--install", action="store_true", help="开机自启 + 桌面链接")
     args = parser.parse_args(argv)
+
+    if args.list:
+        return list_devices()
+    if args.install:
+        return install()
+    if args.panel:
+        return open_panel()
 
     if args.watch is None:
         result = read_once(args.debug)

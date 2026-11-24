@@ -54,7 +54,15 @@ python tray_app.py --quit
 
 :: 完整调试版
 python app.py
+
+:: 列 HID / 一键安装开机自启+桌面链接 / 只开面板
+python my_devices.py --list
+python my_devices.py --install
+python my_devices.py --panel
 ```
+
+配置保存在 `%APPDATA%\ExtBatteryTray\config.json`；上次电量缓存在同目录
+`last_<设备>.json`（设备休眠时用于显示“上次更新 HH:MM”）。
 
 也可以直接双击 `启动面板.cmd`（无控制台窗口）或 `读取电量.cmd`。
 
@@ -70,8 +78,9 @@ PMO WAVE75: 电量 61%（未充电，2.4G）
 - 两张卡片：左鼠标（EWEADN 8K）、右键盘（PMO WAVE75），同时显示
 - 大号百分比 + 进度条，颜色随电量变化（≥60 绿 / 30–59 黄 / <30 红）
 - 鼠标卡片：电压、充电状态、设备自报电量；键盘卡片：连接方式、充电状态、协议
+- 设备休眠时显示**上次电量 + 上次更新时间**（灰色），不会直接变成 `--`
 - 自动刷新（30 秒 / 60 秒 / 2 分钟 / 5 分钟 / 10 分钟 / 30 分钟），可手动刷新
-- 读取在后台线程，界面不卡；关闭窗口即退出，无残留进程
+- 「最小化」按钮：缩到任务栏，托盘右键可恢复；读取在后台线程，界面不卡
 
 ## 托盘常驻
 
@@ -83,10 +92,11 @@ python tray_app.py --quit       :: 让正在运行的托盘退出
 ```
 
 - 通知区域两个图标：**EWEADN 8K**、**PMO WAVE75**，图标里就是电量数字
-- 颜色：绿 ≥60 / 黄 30–59 / 红 <30；灰色是没读到
+- 颜色：绿 ≥60 / 黄 30–59 / 红 <30；灰色数字 = 设备休眠，正在显示上次缓存
 - 左键图标 → 立刻刷新一次
 - 右键图标 → 打开/前置电量面板（已开则不重复开）
-- 悬停 tooltip：`设备名：电量%（HH:MM:SS 更新）`
+- 悬停 tooltip：`设备名：电量%（HH:MM:SS 更新）`；
+  休眠时是 `设备名：电量%（上次更新 HH:MM）`
 - 低 CPU：`SetTimer` 驱动，默认 60 秒；读取在后台线程
 - 退出：面板里的「退出托盘」，或 `python tray_app.py --quit`；
   `WM_DESTROY` 里 `PostQuitMessage`，不留僵尸进程
@@ -202,6 +212,8 @@ E-HUB 的显示不是即时值：它的 `batteryHandleInit` 在 60 秒内会保�
 5. **面板/托盘并发**：两个进程可能在同一秒刷新，键盘的 `AA 10/30/11` 是会话协议，
    用 `Local\ExtBatteryHidReadLock` 命名互斥体把整次读取串行化；实测两个进程
    各读 10 次，20/20 成功。
+6. **上次电量**：每次成功读取写一份 `%APPDATA%\ExtBatteryTray\last_*.json`；
+   休眠/超时时面板和托盘显示灰色上次电量 + 上次更新时间，而不是直接变 `--`。
 
 ## 鼠标测试面板（可视化）
 
@@ -278,6 +290,7 @@ python keyboard_battery.py --watch 30
 | `tray_app.py` | 托盘常驻（两个数字图标 + SetTimer + 单实例） |
 | `tray_common.py` | 托盘配置、开机自启、桌面链接、IPC、僵尸清理 |
 | `device_lock.py` | 跨进程命名互斥体，串行化面板/托盘同时读取 |
+| `last_state.py` | 上次电量缓存（设备休眠时显示上次更新） |
 | `win_icon.py` / `win_link.py` / `win_shell.py` | 纯 ctypes 图标 / 软连接 / .lnk |
 | `app.py` | 完整调试版（Feature/Output/Input、探测 Report ID、手动标定） |
 | `debug_tool.py` | 枚举 / 监听 / 发原始命令 / 唤醒检查 |
@@ -306,7 +319,8 @@ python -m unittest discover -s tests -v
 | 面板两张卡片 + 颜色 | 绿（≥60），鼠标/键盘均正常 |
 | 任务管理器启动项 | 启动文件夹 `电量托盘.lnk`，`autostart_status()` 显示「已启用」 |
 | 桌面入口 | `外设电量` 目录 **symlink** + `启动面板.cmd` **symlink**（非复制） |
-| 无日志文件 | 只有 `tray_config.json` 配置和运行期 `tray_pid.txt`（退出删除） |
+| 无日志文件 | 配置/上次电量在 `%APPDATA%\ExtBatteryTray`，项目目录无日志 |
+| 休眠显示 | 灰色上次电量 + 上次更新 HH:MM（面板 / 托盘 tooltip） |
 | 托盘连续启停 3 次 | 3 次均成功，最后 `pythonw` 进程数 = 0 |
 | 空闲 CPU | 10 秒内 `0.000` 秒（SetTimer 60 秒） |
 
@@ -338,5 +352,8 @@ chunk）里保留了完整的「匠盟」协议实现：16 字节报文、命令
 
 ## 致谢
 
-HID 访问层 `hid_win.py` 来自 [2.4G-battery-viewer](../2.4G-battery-viewer)，
+HID 访问层 `hid_win.py` 与托盘/快捷方式基础模块来自
+[2.4G-battery-viewer](../2.4G-battery-viewer)；托盘图标、上次电量缓存、
+`--list/--install/--panel` 等交互参考了
+[EZ2.4G](https://github.com/Ap0LoG1zE/EZ2.4G)（MIT）。
 协议部分为针对本机设备的逆向结果，仅供学习与个人使用。
