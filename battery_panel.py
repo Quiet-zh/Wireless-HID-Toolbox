@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""battery_panel.py —— EWEADN 8K 鼠标 + PMO WAVE75 键盘电量面板。
+"""battery_panel.py —— 外设电量面板（本机双设备 + 多厂商协议扫描）。
 
     python battery_panel.py
     python battery_panel.py --demo    # 用演示数据预览界面
@@ -17,6 +17,7 @@ import eweadn_proto as mouse_proto
 import pmo_proto as kb_proto
 import tray_common as tc
 import last_state
+import generic_protocols as gp
 
 BG = "#0f1115"
 CARD = "#171a21"
@@ -140,6 +141,7 @@ class BatteryPanel(tk.Tk):
         self._ui_queue: queue.Queue = queue.Queue()
         self._demo_percent = 47
         self._tray_checked = False
+        self._scanning = False
         cfg = tc.load_config()
         self._initial_interval = int(cfg.get("interval", 60) or 60)
         self.autostart_var = tk.BooleanVar(value=tc.is_autostart_enabled())
@@ -238,6 +240,12 @@ class BatteryPanel(tk.Tk):
                   font=("Microsoft YaHei UI", 9), padx=10, pady=3,
                   cursor="hand2").pack(side="left", padx=(0, 6))
 
+        tk.Button(controls, text="扫描全部", command=self._scan_all,
+                  bg="#242a35", fg=SUB, activebackground="#2d3543",
+                  activeforeground=TEXT, relief="flat", bd=0,
+                  font=("Microsoft YaHei UI", 9), padx=10, pady=3,
+                  cursor="hand2").pack(side="left", padx=(0, 6))
+
         tk.Button(controls, text="退出托盘", command=self._quit_tray,
                   bg="#242a35", fg=SUB, activebackground="#2d3543",
                   activeforeground=TEXT, relief="flat", bd=0,
@@ -317,6 +325,12 @@ class BatteryPanel(tk.Tk):
                 if kind == "status":
                     self.status_label.configure(text=payload, fg=FAINT)
                     self.status_dot.configure(fg=GREEN if "已" in payload else RED)
+                elif kind == "scan":
+                    self._show_scan(payload)
+                elif kind == "scan_error":
+                    self._scanning = False
+                    self.status_label.configure(text=f"扫描失败：{payload}", fg=RED)
+                    self.status_dot.configure(fg=RED)
         except queue.Empty:
             pass
         self.after(100, self._pump)
@@ -384,6 +398,55 @@ class BatteryPanel(tk.Tk):
             self.status_dot.configure(fg=RED)
             self.status_label.configure(text="设备暂时没有响应", fg=RED)
         self._schedule_next()
+
+    def _scan_all(self):
+        if self._scanning:
+            return
+        self._scanning = True
+        self.status_label.configure(text="正在扫描所有协议…", fg=FAINT)
+        self.status_dot.configure(fg=AMBER)
+
+        def worker():
+            try:
+                readings = gp.scan()
+            except Exception as exc:  # noqa: BLE001
+                self._ui_queue.put(("scan_error", str(exc)))
+            else:
+                self._ui_queue.put(("scan", readings))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _show_scan(self, readings):
+        self._scanning = False
+        if not readings:
+            self.status_label.configure(text="没有发现已收录协议的设备", fg=AMBER)
+            return
+        self.status_label.configure(
+            text=f"扫描完成：{len(readings)} 台设备", fg=GREEN)
+        self.status_dot.configure(fg=GREEN)
+
+        win = tk.Toplevel(self)
+        win.title("已收录设备")
+        win.geometry("760x380")
+        win.configure(bg=BG)
+        win.transient(self)
+        text = tk.Text(win, bg="#10131a", fg=SUB, insertbackground=SUB,
+                       relief="flat", font=("Consolas", 9), wrap="word",
+                       padx=12, pady=10)
+        scroll = ttk.Scrollbar(win, orient="vertical", command=text.yview)
+        text.configure(yscrollcommand=scroll.set)
+        text.pack(side="left", fill="both", expand=True)
+        scroll.pack(side="right", fill="y")
+        for i, r in enumerate(readings, 1):
+            pct = f"{r.percent}%" if r.percent is not None else "--"
+            text.insert("end", f"[{i}] {r.name}  ({r.key})\n")
+            text.insert("end", f"    {pct}  {r.charging_text}"
+                               f"{'  ' + str(r.voltage_mv) + ' mV' if r.voltage_mv else ''}\n")
+            text.insert("end", f"    {r.source}\n")
+            if r.detail:
+                text.insert("end", f"    {r.detail}\n")
+            text.insert("end", "\n")
+        text.configure(state="disabled")
 
     def _ensure_tray(self):
         if self._tray_checked:

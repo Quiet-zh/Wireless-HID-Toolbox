@@ -1,9 +1,12 @@
 # -*- coding: utf-8 -*-
-"""my_devices.py —— 两台设备的统一电量入口（对应 README 验收标准 1）。
+"""my_devices.py —— 统一入口：本机两台设备 + 多厂商协议扫描。
 
     python my_devices.py --once
     python my_devices.py --json
     python my_devices.py --watch 30
+    python my_devices.py --scan       # 所有已收录协议
+    python my_devices.py --list
+    python my_devices.py --install
     python my_devices.py --debug
 """
 from __future__ import annotations
@@ -107,10 +110,15 @@ def main(argv=None) -> int:
     parser.add_argument("--watch", type=float, metavar="SECONDS", help="循环读取间隔")
     parser.add_argument("--debug", action="store_true", help="打印读取过程")
     parser.add_argument("--list", action="store_true", help="列出所有 HID 接口")
+    parser.add_argument("--scan", action="store_true",
+                        help="扫描所有已收录协议的设备（含多厂商）")
     parser.add_argument("--panel", action="store_true", help="打开电量面板")
     parser.add_argument("--install", action="store_true", help="开机自启 + 桌面链接")
     args = parser.parse_args(argv)
 
+    if args.scan:
+        import generic_scan
+        return generic_scan.main(["--json"] if args.json else [])
     if args.list:
         return list_devices()
     if args.install:

@@ -6,6 +6,7 @@ Windows 10/11 的 2.4G 无线外设电量与 HID 调试工具箱。纯 Python �
 - **电量**：迈从 EWEADN 8K 鼠标（`3554:F517`）、PMO WAVE75 键盘（`36B0:3002/3009`）
 - **三种形态**：双设备电量面板、双数字托盘、完整 HID 调试台
 - **鼠标测试**：Raw Input 按键 / 移动 / 滚轮 / 坐标 / 点击统计
+- **多厂商协议**：ATK/MCHOSE/罗技/杰理/Endgame/VAXEE/Nordic 等 20+ 设备表
 - **系统集成**：开机自启、桌面软连接、上次电量缓存、休眠显示「上次更新」
 - **调试**：Feature/Output/Input、探测 Report ID、手动标定
 
@@ -59,6 +60,11 @@ python tray_app.py --quit
 :: 完整调试版
 python app.py
 
+:: 多厂商协议扫描（ATK/MCHOSE/罗技/杰理/Endgame/VAXEE/Nordic...）
+python generic_scan.py
+python generic_scan.py --list
+python my_devices.py --scan
+
 :: 列 HID / 一键安装开机自启+桌面链接 / 只开面板
 python my_devices.py --list
 python my_devices.py --install
@@ -84,6 +90,7 @@ PMO WAVE75: 电量 61%（未充电，2.4G）
 - 鼠标卡片：电压、充电状态、设备自报电量；键盘卡片：连接方式、充电状态、协议
 - 设备休眠时显示**上次电量 + 上次更新时间**（灰色），不会直接变成 `--`
 - CLI 也一样：`my_devices.py --once` 在休眠时打印 `电量 84%（上次更新 01:36，休眠）`
+- 「扫描全部」按钮：后台调用多厂商协议库，弹窗列出所有命中的设备
 - 自动刷新（30 秒 / 60 秒 / 2 分钟 / 5 分钟 / 10 分钟 / 30 分钟），可手动刷新
 - 「最小化」按钮：缩到任务栏，托盘右键可恢复；读取在后台线程，界面不卡
 
@@ -105,6 +112,64 @@ python tray_app.py --quit       :: 让正在运行的托盘退出
 - 低 CPU：`SetTimer` 驱动，默认 60 秒；读取在后台线程
 - 退出：面板里的「退出托盘」，或 `python tray_app.py --quit`；
   `WM_DESTROY` 里 `PostQuitMessage`，不留僵尸进程
+
+## 多厂商协议扫描
+
+```bat
+python generic_scan.py              :: 扫描并读一次
+python generic_scan.py --list       :: 只列 VID:PID 命中的协议
+python generic_scan.py --json
+python generic_scan.py --watch 60
+python my_devices.py --scan         :: 同一个入口
+```
+
+面板里点「扫描全部」也会在后台跑一遍，结果弹窗显示。
+
+已接入的协议（只读查询）：
+
+| 协议 / 方案 | 识别方式 | 电量位置 | 状态 |
+|---|---|---|---|
+| ATK / VXE / VGN 协议 1 | `0xFF02`，17B，Report `0x08` | `[6]`，`0x55` 校验 | 公开协议移植 |
+| ATK / VXE 协议 2 | `0xFF05`，64B，Report `0x08` | `[7]`，`[1]=0x72/[5]=0x07` | 公开协议移植 |
+| Dareu A950 / VXE / Imecoo | 同 ATK 1 | `[6]` | 设备表 |
+| MCHOSE V9 Turbo / Turbo+ | `0xFF90`，64B，`55 65 01` | `[2]`，状态 `[3]` | 公开协议移植 |
+| ATK N9V2 耳机 | `0xFF90`，64B，`55 65 01` | `[2]`，状态 `[3]` | 公开协议移植 |
+| MCHOSE A5 / AX5 | VID `0x2023`，Feature 65，MI_02 | `[8]`，充电 `[7]`，cmd `0x83` | 公开协议移植 |
+| MCHOSE A7 compatible | `5253:1021`，Feature `0x11`，整体 XOR | payload `[9]`，充电 `[10]` | 公开协议移植 |
+| MCHOSE gmouse（G3/A7e/G7） | `0xFF01`，`55 30 A5 0B 2E` | 回复 `AA 30` 后 `+8` | 公开协议移植 |
+| MCHOSE Z75S 键盘 | `258A:01BB`，20B，`0x13/0x4A` | `[5]`，前 19 字节和校验 | 公开协议移植 |
+| XIBERIA T7 | `36F9:*`，`0xFF00`，64B | `[3]`，`55 65 00` | 公开协议移植 |
+| Rapoo VT3S | `24AE:1411`，`0xFF00`，19B | 主动上报 `[8]`，状态 `[7]` | 公开协议移植 |
+| Endgame Gear | VID `0x3367`，Feature `0xA1` | `[16]`，电压 `[17]` | 公开协议移植 |
+| VAXEE / ZYGEN | VID `0x3057`，Feature `0x0E` | `[5] × 5%` | 公开协议移植 |
+| Nordic nRF | VID `0x1915`，Feature `0x05` | `[9]` | 公开协议移植 |
+| 罗技 HID++ 2.0 | VID `0x046D`，Feature `0x1004/0x1000/0x1001` | `[4]`，状态 `[5]/[6]` | 公开协议移植 |
+| DARKRIM / 杰理 JL_RCSP | `3654:6901`，`0xFF02`，65B | TLV `0x01` 首字节 | 公开协议移植 |
+| ZOWIE DW | `04A5:800A`，`0xFF03` 输出 + `0xFF04` 输入 | 电压插值曲线 | **实验**，双接口未在真机验证 |
+| 标准 HID 电量 | Usage `0x06:0x20` / `0x0D:0x3B` / `0x85:0x65` | Feature 值 | 通用 |
+| 抓包协议 | `captured.json` 的 requests + offset | 任意偏移 | 手动配置 |
+
+> 只有 EWEADN 8K、PMO WAVE75 在本机实测；其他协议来自公开仓库/协议文档的移植，
+> 建议先用 `generic_scan.py --list` 确认 VID:PID/usage，再用 `--scan` 验证。
+> 只发送查询帧，不写设备配置；未知 opcode 不要盲目爆破。
+
+### 抓包协议（可选）
+
+如果某台设备不在表里，但抓到了「请求帧 + 电量字节」，可以手动写
+`%APPDATA%\ExtBatteryTray\captured.json`：
+
+```json
+{
+  "373B:1278": {
+    "name": "ATK A9 Air",
+    "requests": ["08 04 00 00 00 00 00 00 00 00 00 00 00 00 00 00 49"],
+    "offset": 6,
+    "invert": false
+  }
+}
+```
+
+`invert: true` 时取 `100 - 原值`。扫描时会自动尝试，不需要改代码。
 
 ## 完整调试版
 
@@ -296,6 +361,8 @@ python keyboard_battery.py --watch 30
 | `tray_common.py` | 托盘配置、开机自启、桌面链接、IPC、僵尸清理 |
 | `device_lock.py` | 跨进程命名互斥体，串行化面板/托盘同时读取 |
 | `last_state.py` | 上次电量缓存（设备休眠时显示上次更新） |
+| `generic_protocols.py` | 多厂商协议表 / 标准 HID / 抓包协议读取 |
+| `generic_scan.py` | 多厂商设备扫描 CLI（`--list` / `--json` / `--watch`） |
 | `win_icon.py` / `win_link.py` / `win_shell.py` | 纯 ctypes 图标 / 软连接 / .lnk |
 | `app.py` | 完整调试版（Feature/Output/Input、探测 Report ID、手动标定） |
 | `debug_tool.py` | 枚举 / 监听 / 发原始命令 / 唤醒检查 |
@@ -305,6 +372,7 @@ python keyboard_battery.py --watch 30
 | `keyboard_battery.py` | 键盘电量命令行入口 |
 | `hid_win.py` | 纯 ctypes 的 Windows HID 访问层（沿用 `2.4G-battery-viewer`） |
 | `tests/test_proto.py` | 纯协议单元测试（不访问硬件） |
+| `tests/test_generic.py` | 多厂商协议帧/校验/解析单元测试 |
 
 ## 测试
 
@@ -314,7 +382,8 @@ python -m unittest discover -s tests -v
 
 8 个用例覆盖：真机抓包帧的校验和、报文归一化、电量解析、电压曲线、单调性；
 另外 5 个用例覆盖 Raw Input 的移动 / 按键 / 滚轮 / 键盘事件解析；
-再加 4 个用例覆盖 PMO 键盘报文构造与电量数据，共 17 个。
+再加 4 个用例覆盖 PMO 键盘报文构造与电量数据；
+最后 12 个用例覆盖多厂商协议的请求帧 / 校验 / 解析（ATK、MCHOSE、JL、Zowie 等），共 29 个。
 
 ## 验收自检（本机实测）
 
@@ -326,6 +395,7 @@ python -m unittest discover -s tests -v
 | 桌面入口 | `外设电量` 目录 **symlink** + `启动面板.cmd` **symlink**（非复制） |
 | 无日志文件 | 配置/上次电量在 `%APPDATA%\ExtBatteryTray`，项目目录无日志 |
 | 休眠显示 | 灰色上次电量 + 上次更新 HH:MM（面板 / 托盘 tooltip） |
+| 多厂商扫描 | `generic_scan.py` 命中 EWEADN/PMO；其他协议待真机验证 |
 | 托盘连续启停 3 次 | 3 次均成功，最后 `pythonw` 进程数 = 0 |
 | 空闲 CPU | 10 秒内 `0.000` 秒（SetTimer 60 秒） |
 
@@ -361,4 +431,10 @@ HID 访问层 `hid_win.py` 与托盘/快捷方式基础模块来自
 [2.4G-battery-viewer](../2.4G-battery-viewer)；托盘图标、上次电量缓存、
 `--list/--install/--panel` 等交互参考了
 [EZ2.4G](https://github.com/Ap0LoG1zE/EZ2.4G)（MIT）。
-协议部分为针对本机设备的逆向结果，仅供学习与个人使用。
+
+多厂商协议参数来自公开资料：
+[sdparklab/Voltide](https://github.com/sdparklab/Voltide)（MIT）、
+[aliezzzz/mchose-battery](https://github.com/aliezzzz/mchose-battery)（MIT）、
+[Techxey/atk-mouse-battery](https://github.com/Techxey/atk-mouse-battery)、
+[HifumiDaisuki01/MchoseBatteryTray](https://github.com/HifumiDaisuki01/MchoseBatteryTray)
+以及 `EZ2.4G/c/PROTOCOLS.md` 的整理。协议部分仅供学习与个人使用。
