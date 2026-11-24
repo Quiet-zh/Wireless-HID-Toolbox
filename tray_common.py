@@ -19,6 +19,7 @@ import win_link
 import win_shell
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+IS_FROZEN = bool(getattr(sys, "frozen", False))
 
 
 def _runtime_dir() -> str:
@@ -126,7 +127,38 @@ def tray_script() -> str:
     return os.path.join(BASE_DIR, "tray_app.py")
 
 
+def tray_command() -> list[str]:
+    """启动托盘进程的命令（源码运行 / PyInstaller exe 两种）。"""
+    if IS_FROZEN:
+        return [sys.executable, "--tool", "tray"]
+    return [pythonw_path(), tray_script()]
+
+
+def launch_tool(script: str) -> None:
+    """从界面打开子工具；打包成 exe 后用 exe 自己的 --tool 分发。"""
+    import subprocess
+    mapping = {
+        "battery_panel.py": "panel",
+        "tray_app.py": "tray",
+        "mouse_test_gui.py": "mouse-test",
+        "app.py": "hid-debug",
+    }
+    if IS_FROZEN:
+        cmd = [sys.executable, "--tool", mapping.get(script, "panel")]
+        workdir = os.path.dirname(sys.executable)
+    else:
+        cmd = [pythonw_path(), os.path.join(BASE_DIR, script)]
+        workdir = BASE_DIR
+    subprocess.Popen(cmd, cwd=workdir, creationflags=0x00000008)
+
+
+def launch_panel() -> None:
+    launch_tool("battery_panel.py")
+
+
 def autostart_command() -> str:
+    if IS_FROZEN:
+        return f'"{sys.executable}" --tool tray'
     return f'"{pythonw_path()}" "{tray_script()}"'
 
 
@@ -235,11 +267,19 @@ def set_autostart(enabled: bool) -> bool:
     能直接看到它（名字就是 电量托盘），并且可以在那里直接启用/禁用。
     """
     if enabled:
+        if IS_FROZEN:
+            target = sys.executable
+            arguments = "--tool tray"
+            workdir = os.path.dirname(sys.executable)
+        else:
+            target = pythonw_path()
+            arguments = f'"{tray_script()}"'
+            workdir = BASE_DIR
         ok = win_shell.create_shortcut(
-            startup_lnk(), pythonw_path(),
-            arguments=f'"{tray_script()}"',
-            workdir=BASE_DIR,
-            description="外设电量托盘：常驻显示 EWEADN 8K / PMO WAVE75 电量")
+            startup_lnk(), target,
+            arguments=arguments,
+            workdir=workdir,
+            description="外设电量托盘：常驻显示外设电量")
         _set_startup_approved(True)
     else:
         _clear_startup_approved()
@@ -291,12 +331,23 @@ def desktop_link_status() -> dict:
 
 
 def install_desktop_links() -> dict:
-    """建桌面链接：项目文件夹的目录链接 + 启动脚本的软链接。
-
-    返回 {'folder': 类型, 'links': {名字: 类型}, 'errors': [消息]}
-    """
+    """建桌面入口：源码版建软链接；exe 版建指向 exe 的快捷方式。"""
     d = win_shell.desktop_dir()
     out: dict = {"folder": "", "links": {}, "errors": []}
+
+    if IS_FROZEN:
+        name = "外设电量.lnk"
+        try:
+            win_shell.create_shortcut(
+                os.path.join(d, name), sys.executable,
+                arguments="--tool panel",
+                workdir=os.path.dirname(sys.executable),
+                description="Wireless HID Toolbox")
+            out["folder"] = "shortcut"
+            out["links"][name] = "shortcut"
+        except OSError as e:
+            out["errors"].append(str(e))
+        return out
 
     try:
         out["folder"] = win_link.create_dir_link(
@@ -418,8 +469,9 @@ def start_tray_app(wait_timeout: float = 6.0) -> bool:
         return True
     cleanup_zombie()
     try:
-        subprocess.Popen([pythonw_path(), os.path.join(BASE_DIR, "tray_app.py")],
-                         cwd=BASE_DIR, creationflags=0x00000008)
+        subprocess.Popen(tray_command(),
+                         cwd=os.path.dirname(sys.executable) if IS_FROZEN else BASE_DIR,
+                         creationflags=0x00000008)
     except Exception:
         return False
     return wait_for_tray(wait_timeout)
@@ -571,7 +623,12 @@ def cleanup_zombie(wait: float = 2.0) -> bool:
         return False
     image = os.path.basename(process_image(pid)).lower()
     cmd = process_cmdline(pid).lower()
-    if not (image.startswith("python") and "tray_app" in cmd):
+    if IS_FROZEN:
+        expected = os.path.basename(sys.executable).lower()
+        ok = image == expected and "--tool" in cmd and "tray" in cmd
+    else:
+        ok = image.startswith("python") and "tray_app" in cmd
+    if not ok:
         remove_pid()
         return False
     if not kill_pid(pid):

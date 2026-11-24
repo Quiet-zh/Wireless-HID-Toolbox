@@ -6,3 +6,6 @@ venv/
 tray_config.json
 tray_pid.txt
 calibration.json
+build/
+dist/
+*.spec

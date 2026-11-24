@@ -15,6 +15,7 @@ import json
 import os
 import re
 import time
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from typing import Callable, Optional
 
@@ -418,10 +419,11 @@ def _reading(ifaces, percent: Optional[int], source: str, detail: str = "",
 # --------------------------------------------------------------------------
 
 
-def read_eweadn(spec: Spec, ifaces: list[HidInterface]) -> Optional[Reading]:
+def read_eweadn(spec: Spec, ifaces: list[HidInterface],
+                fast: bool = False) -> Optional[Reading]:
     import eweadn_proto as proto
     try:
-        r = proto.read_battery(retries=1)
+        r = proto.read_battery(retries=1, timeout=0.45 if fast else 1.2)
     except Exception:
         return None
     d = ifaces[0]
@@ -432,10 +434,11 @@ def read_eweadn(spec: Spec, ifaces: list[HidInterface]) -> Optional[Reading]:
                    detail=f"设备自报 {r.level_raw}% · {r.voltage_v:.3f} V")
 
 
-def read_pmo(spec: Spec, ifaces: list[HidInterface]) -> Optional[Reading]:
+def read_pmo(spec: Spec, ifaces: list[HidInterface],
+             fast: bool = False) -> Optional[Reading]:
     import pmo_proto as proto
     try:
-        r = proto.read_battery(retries=1)
+        r = proto.read_battery(retries=1, timeout=0.45 if fast else 1.2)
     except Exception:
         return None
     d = ifaces[0]
@@ -1000,40 +1003,47 @@ def matching_specs(ifaces: list[HidInterface]) -> list[Spec]:
     return [s for s in SPECS if s.matches(ifaces)]
 
 
-def scan(ifaces: Optional[list[HidInterface]] = None,
-         include_standard: bool = True) -> list[Reading]:
-    """扫描全部 HID，按协议表读取；返回每台设备一条结果。"""
-    groups_ = groups(ifaces)
-    out: list[Reading] = []
-    for key in sorted(groups_):
-        group = groups_[key]
-        handled = False
-        for spec in sorted(SPECS, key=lambda s: s.priority):
-            if not spec.matches(group):
-                continue
-            try:
-                r = READERS[spec.kind](spec, group)
-            except Exception:
-                r = None
-            if r and r.ok:
-                if not r.name:
-                    r.name = _iface_name(group)
-                out.append(r)
-                handled = True
-                break
-        if handled:
+def _scan_group(key: tuple[int, int], group: list[HidInterface],
+                include_standard: bool, fast: bool) -> Optional[Reading]:
+    for spec in sorted(SPECS, key=lambda s: s.priority):
+        if not spec.matches(group):
             continue
-        proto = captured_protocols().get(f"{key[0]:04X}:{key[1]:04X}")
-        if proto:
-            r = read_captured(proto, group)
-            if r:
-                out.append(r)
-                continue
-        if include_standard:
-            r = read_standard(group)
-            if r:
-                out.append(r)
-    return out
+        try:
+            if spec.kind in ("eweadn", "pmo"):
+                r = READERS[spec.kind](spec, group, fast=fast)
+            else:
+                r = READERS[spec.kind](spec, group)
+        except Exception:
+            r = None
+        if r and r.ok:
+            if not r.name:
+                r.name = _iface_name(group)
+            return r
+    proto = captured_protocols().get(f"{key[0]:04X}:{key[1]:04X}")
+    if proto:
+        r = read_captured(proto, group)
+        if r:
+            return r
+    if include_standard:
+        return read_standard(group)
+    return None
+
+
+def scan(ifaces: Optional[list[HidInterface]] = None,
+         include_standard: bool = True,
+         fast: bool = False) -> list[Reading]:
+    """并行扫描各设备；fast 会缩短已知设备的等待超时。"""
+    groups_ = groups(ifaces)
+    items = sorted(groups_.items())
+    if not items:
+        return []
+    workers = min(4, len(items))
+    with ThreadPoolExecutor(max_workers=workers,
+                            thread_name_prefix="hid-scan") as pool:
+        results = list(pool.map(
+            lambda kv: _scan_group(kv[0], kv[1], include_standard, fast),
+            items))
+    return [r for r in results if r is not None]
 
 
 def list_supported(ifaces: Optional[list[HidInterface]] = None) -> list[dict]:

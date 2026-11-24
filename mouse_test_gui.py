@@ -1,13 +1,11 @@
 # -*- coding: utf-8 -*-
-"""mouse_test_gui.py —— EWEADN 8K 鼠标测试面板（可视化）。
+"""mouse_test_gui.py —— 鼠标键盘测试（可视化）。
 
     python mouse_test_gui.py
     python mouse_test_gui.py --demo    # 自动生成演示事件，便于预览界面
 
-界面参考常见的「鼠标测试」网页：
-左侧是测试区域和五个按键指示，右侧是滚轮计数、坐标和点击统计。
-事件来自 mouse_events.RawInputListener（Windows Raw Input），只统计 EWEADN
-设备的鼠标事件；键盘页签接收所有键盘，方便测试键盘。
+事件来自 mouse_events.RawInputListener（Windows Raw Input）。
+当系统里有多个鼠标/键盘时，可以在对应页签选择要监听的设备。
 """
 from __future__ import annotations
 
@@ -18,7 +16,7 @@ import random
 import time
 import tkinter as tk
 from collections import deque
-from tkinter import messagebox
+from tkinter import messagebox, ttk
 
 import mouse_events as me
 
@@ -74,6 +72,12 @@ class MouseTestApp(tk.Tk):
         self.events: queue.Queue = queue.Queue()
         self.listener = None
         self.listener_error = None
+        self.test_devices = me.list_test_devices()
+        self.mouse_var = tk.StringVar(value="全部鼠标")
+        self.keyboard_var = tk.StringVar(value="全部键盘")
+        self.mouse_combo = None
+        self.keyboard_combo = None
+        self._init_device_choices()
 
         self.active_tab = "mouse"
         self.tiles = {}
@@ -96,7 +100,7 @@ class MouseTestApp(tk.Tk):
         self.pad_xy = None
         self.pressed_buttons = set()
 
-        self.title("EWEADN 8K 鼠标测试")
+        self.title("鼠标键盘测试")
         self.geometry("1180x760")
         self.minsize(1000, 680)
         self.configure(bg=BG)
@@ -116,6 +120,78 @@ class MouseTestApp(tk.Tk):
         if demo:
             self.after(600, self._demo_tick)
 
+    # ------------------------------------------------------------- devices
+    def _devices(self, kind: str) -> list[dict]:
+        return [d for d in self.test_devices if d["kind"] == kind]
+
+    def _init_device_choices(self):
+        for kind, var in (("mouse", self.mouse_var),
+                          ("keyboard", self.keyboard_var)):
+            devs = self._devices(kind)
+            if len(devs) == 1:
+                var.set(devs[0]["label"])
+            else:
+                var.set("全部鼠标" if kind == "mouse" else "全部键盘")
+
+    def _selector(self, parent, kind: str):
+        devs = self._devices(kind)
+        if len(devs) <= 1:
+            return
+        row = tk.Frame(parent, bg=BG)
+        row.pack(fill="x", pady=(0, 8))
+        tk.Label(row, text="监听设备", bg=BG, fg=MUTED,
+                 font=(UI, 9)).pack(side="left")
+        var = self.mouse_var if kind == "mouse" else self.keyboard_var
+        options = (["全部鼠标" if kind == "mouse" else "全部键盘"]
+                   + [d["label"] for d in devs])
+        combo = ttk.Combobox(row, textvariable=var, values=options,
+                             state="readonly", width=30, font=(UI, 9))
+        combo.pack(side="left", padx=(8, 6))
+        combo.bind("<<ComboboxSelected>>", lambda _e: self._restart_listener())
+        tk.Button(row, text="刷新", command=self._refresh_devices,
+                  bg=CHIP, fg=MUTED,
+                  relief="flat", bd=0, font=(UI, 8), padx=8, pady=2,
+                  cursor="hand2").pack(side="left")
+        if kind == "mouse":
+            self.mouse_combo = combo
+        else:
+            self.keyboard_combo = combo
+
+    def _refresh_devices(self):
+        self.test_devices = me.list_test_devices()
+        for kind, combo, var in (("mouse", self.mouse_combo, self.mouse_var),
+                                 ("keyboard", self.keyboard_combo,
+                                  self.keyboard_var)):
+            devs = self._devices(kind)
+            all_text = "全部鼠标" if kind == "mouse" else "全部键盘"
+            if combo is not None:
+                values = [all_text] + [d["label"] for d in devs]
+                combo.configure(values=values)
+                if var.get() not in values:
+                    var.set(all_text)
+            elif len(devs) == 1:
+                var.set(devs[0]["label"])
+            elif not devs:
+                var.set(all_text)
+        self._restart_listener()
+
+    def _allowed_handles(self) -> set[int]:
+        allowed: set[int] = set()
+        for kind, var in (("mouse", self.mouse_var),
+                          ("keyboard", self.keyboard_var)):
+            devs = self._devices(kind)
+            all_text = "全部鼠标" if kind == "mouse" else "全部键盘"
+            choice = var.get()
+            if choice == all_text or len(devs) <= 1:
+                for d in devs:
+                    allowed.update(d["handles"])
+            else:
+                for d in devs:
+                    if d["label"] == choice:
+                        allowed.update(d["handles"])
+                        break
+        return allowed
+
     # ------------------------------------------------------------- window
     def _center(self):
         self.update_idletasks()
@@ -127,9 +203,9 @@ class MouseTestApp(tk.Tk):
         bar = tk.Frame(self, bg=ACCENT_SOFT, height=40)
         bar.pack(fill="x")
         bar.pack_propagate(False)
-        tk.Label(bar, text="●  测试模式已激活", bg=ACCENT_SOFT, fg=ACCENT,
+        tk.Label(bar, text="●  鼠标键盘测试", bg=ACCENT_SOFT, fg=ACCENT,
                  font=(UI, 10, "bold")).pack(side="left", padx=22)
-        tk.Label(bar, text="EWEADN 8K  ·  3554:F517  ·  S9 V2 Master",
+        tk.Label(bar, text="Raw Input  ·  只读  ·  不记录、不落盘",
                  bg=ACCENT_SOFT, fg="#7a76c9", font=(UI, 9)).pack(side="right", padx=22)
 
     def _build_tabs(self):
@@ -166,7 +242,8 @@ class MouseTestApp(tk.Tk):
         tk.Label(head, text=" 鼠标测试区域", bg=BG, fg=TEXT,
                  font=(UI, 13, "bold")).pack(side="left")
         tk.Label(left, text="在此区域内点击、滚动或移动鼠标进行测试",
-                 bg=BG, fg=MUTED, font=(UI, 9)).pack(anchor="w", pady=(4, 10))
+                 bg=BG, fg=MUTED, font=(UI, 9)).pack(anchor="w", pady=(4, 6))
+        self._selector(left, "mouse")
 
         self.pad = tk.Canvas(left, bg=BG, highlightthickness=0, height=360)
         self.pad.pack(fill="both", expand=True)
@@ -386,9 +463,9 @@ class MouseTestApp(tk.Tk):
                                 fill=ACCENT, outline="", state="hidden", tags="mouse"),
         }
 
-        pad.create_text(cx, cy + 110, text="EWEADN 8K", fill="#5c6886",
+        pad.create_text(cx, cy + 110, text="鼠标测试", fill="#5c6886",
                         font=(UI, 9), tags="mouse")
-        pad.create_text(cx, cy + 128, text="S9 V2 Master", fill="#454f68",
+        pad.create_text(cx, cy + 128, text="Raw Input", fill="#454f68",
                         font=(UI, 8), tags="mouse")
         self.pad_xy = pad.create_text(
             16, max(self.pad.winfo_height() - 14, 20), text="X: -, Y: -",
@@ -413,6 +490,7 @@ class MouseTestApp(tk.Tk):
                  font=(UI, 13, "bold")).pack(side="left")
         tk.Label(card, text="按键盘上的任意键进行测试（键值只显示，不记录、不落盘）",
                  bg=CARD, fg=MUTED, font=(UI, 9)).pack(anchor="w", padx=24, pady=(4, 0))
+        self._selector(card, "keyboard")
 
         body = tk.Frame(card, bg=CARD)
         body.pack(fill="both", expand=True, padx=24, pady=18)
@@ -458,10 +536,28 @@ class MouseTestApp(tk.Tk):
     # ----------------------------------------------------------- listener
     def _start_listener(self):
         try:
-            self.listener = me.RawInputListener(self.events.put, accept_all=True)
+            self.listener_error = None
+            self.listener = me.RawInputListener(
+                self.events.put, handles=self._allowed_handles())
             self.listener.start()
         except Exception as exc:  # noqa: BLE001
             self.listener_error = str(exc)
+
+    def _restart_listener(self):
+        if self.demo:
+            return
+        if self.listener:
+            try:
+                self.listener.stop()
+            except Exception:
+                pass
+            self.listener = None
+        try:
+            while True:
+                self.events.get_nowait()
+        except queue.Empty:
+            pass
+        self._start_listener()
 
     # -------------------------------------------------------------- queue
     def _pump(self):
@@ -475,8 +571,6 @@ class MouseTestApp(tk.Tk):
 
     def _handle_event(self, ev):
         kind = ev.get("type")
-        if kind in ("move", "button", "wheel") and not ev.get("eweadn"):
-            return  # 鼠标事件只统计 EWEADN
         if kind == "move":
             self.last_move = (ev["dx"], ev["dy"])
             self._update_coords(ev)
@@ -673,7 +767,7 @@ class MouseTestApp(tk.Tk):
 
 
 def main(argv=None) -> int:
-    parser = argparse.ArgumentParser(description="EWEADN 8K 鼠标测试面板")
+    parser = argparse.ArgumentParser(description="鼠标键盘测试")
     parser.add_argument("--demo", action="store_true", help="自动生成演示事件")
     args = parser.parse_args(argv)
     enable_dpi_awareness()

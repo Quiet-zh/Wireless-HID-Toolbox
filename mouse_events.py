@@ -255,6 +255,64 @@ def list_raw_devices():
     return items
 
 
+def list_test_devices() -> list[dict]:
+    """按物理设备聚合 Raw Input 鼠标/键盘，供测试界面选择监听对象。"""
+    import re
+    try:
+        import hid_win
+        names = {}
+        for d in hid_win.enumerate_hid():
+            if d.product:
+                names[(d.vid, d.pid)] = d.product
+    except Exception:
+        names = {}
+
+    groups: dict[str, dict] = {}
+    for handle, typ, name in list_raw_devices():
+        if typ == RIM_TYPEMOUSE:
+            kind = "mouse"
+        elif typ == RIM_TYPEKEYBOARD:
+            kind = "keyboard"
+        else:
+            continue
+        m = re.search(r"VID_([0-9A-F]{4})&PID_([0-9A-F]{4})", name, re.I)
+        if m:
+            vid, pid = int(m.group(1), 16), int(m.group(2), 16)
+            base = f"{vid:04X}:{pid:04X}"
+            product = names.get((vid, pid), "")
+        elif "ROOT#MOUSE" in name.upper():
+            base, product = "ROOT:MOUSE", "系统默认鼠标"
+        elif "ROOT#KEYBOARD" in name.upper():
+            base, product = "ROOT:KEYBOARD", "系统默认键盘"
+        else:
+            base, product = f"DEV:{(name or str(handle))[-12:]}", ""
+        key = f"{base}:{kind}"
+        display = product or base
+        if kind == "mouse" and "鼠标" not in display:
+            display += "（鼠标）"
+        if kind == "keyboard" and "键盘" not in display:
+            display += "（键盘）"
+        g = groups.setdefault(key, {
+            "key": key, "kind": kind, "base": base,
+            "label": display,
+            "handles": [],
+        })
+        g["handles"].append(handle)
+
+    # 同名设备加序号，避免下拉框里分不清
+    seen: dict[str, int] = {}
+    out = []
+    for g in groups.values():
+        label = g["label"]
+        seen[label] = seen.get(label, 0) + 1
+        if seen[label] > 1:
+            label = f"{label} #{seen[label]}"
+        g["label"] = label
+        out.append(g)
+    out.sort(key=lambda g: (0 if g["kind"] == "mouse" else 1, g["label"]))
+    return out
+
+
 def create_message_window():
     hinst = kernel32.GetModuleHandleW(None)
     class_name = f"EweadnRawInput_{id(_WNDPROC_REF):x}"
@@ -474,10 +532,11 @@ class RawInputListener:
     事件字段：type（move/button/wheel/key）、handle、eweadn、ts、screen。
     """
 
-    def __init__(self, callback, accept_all=False):
+    def __init__(self, callback, accept_all=False, handles=None):
         self.callback = callback
         self.accept_all = accept_all
         self.eweadn_handles = set()
+        self.allowed_handles = set(handles) if handles is not None else None
         self.hwnd = None
         self.error = None
         self._buf = ctypes.create_string_buffer(256)
@@ -510,6 +569,8 @@ class RawInputListener:
                 if typ in (RIM_TYPEMOUSE, RIM_TYPEKEYBOARD)
                 and VID_PID_TAG in name.lower()
             }
+            if self.allowed_handles is None and not self.accept_all:
+                self.allowed_handles = set(self.eweadn_handles)
             self.hwnd = hwnd
             self._ready.set()
             msg = wintypes.MSG()
@@ -542,7 +603,9 @@ class RawInputListener:
         ri = ctypes.cast(self._buf, ctypes.POINTER(RAWINPUT)).contents
         handle = int(ri.header.hDevice or 0)
         is_eweadn = handle in self.eweadn_handles
-        if not self.accept_all and not is_eweadn:
+        if self.allowed_handles is not None and handle not in self.allowed_handles:
+            return
+        if self.allowed_handles is None and not self.accept_all and not is_eweadn:
             return
         base = {
             "handle": handle,

@@ -301,7 +301,7 @@ class BatteryPanel(tk.Tk):
 
         def worker():
             try:
-                snaps = dr.snapshot()
+                snaps = dr.snapshot(fast=True)
             except Exception as exc:  # noqa: BLE001
                 self._queue.put(("error", str(exc)))
             else:
@@ -625,9 +625,10 @@ class SettingsWindow(tk.Toplevel):
         tools = [
             ("扫描全部设备", self._scan_all),
             ("查看协议表", self._protocols),
-            ("鼠标测试面板", lambda: self._launch("mouse_test_gui.py")),
+            ("鼠标键盘测试", lambda: self._launch("mouse_test_gui.py")),
             ("HID 调试台", lambda: self._launch("app.py")),
             ("打开项目目录", lambda: os.startfile(BASE_DIR)),
+            ("打开配置目录", lambda: os.startfile(tc.RUNTIME_DIR)),
         ]
         grid = tk.Frame(tool_box, bg=BG)
         grid.pack(fill="x", padx=8, pady=8)
@@ -646,7 +647,7 @@ class SettingsWindow(tk.Toplevel):
     def _rescan_devices(self):
         self.boot_msg.configure(text="正在扫描设备…", fg=FAINT)
         try:
-            dr.snapshot()
+            dr.snapshot(fast=True)
         except Exception as exc:  # noqa: BLE001
             self.boot_msg.configure(text=f"扫描失败：{exc}", fg=RED)
             return
@@ -769,8 +770,7 @@ class SettingsWindow(tk.Toplevel):
 
     def _launch(self, script):
         try:
-            subprocess.Popen([tc.pythonw_path(), os.path.join(BASE_DIR, script)],
-                             cwd=BASE_DIR, creationflags=0x00000008)
+            tc.launch_tool(script)
             self.boot_msg.configure(text=f"已打开 {script}", fg=GREEN)
         except Exception as exc:  # noqa: BLE001
             self.boot_msg.configure(text=f"打开失败：{exc}", fg=RED)

@@ -153,7 +153,7 @@ def _meta_defaults(devs: dict) -> dict:
     return {"show": True, "tray": True, "order": _next_order(devs)}
 
 
-def snapshot() -> list[DeviceSnapshot]:
+def snapshot(fast: bool = False) -> list[DeviceSnapshot]:
     """扫描一次并返回所有已知设备的快照（含休眠缓存/离线占位）。"""
     cfg = tc.load_config()
     devs = _ensure(cfg)
@@ -161,8 +161,8 @@ def snapshot() -> list[DeviceSnapshot]:
 
     readings: list[gp.Reading] = []
     try:
-        with device_lock.scan_lock():
-            readings = gp.scan()
+        with device_lock.scan_lock(timeout_ms=100 if fast else 400):
+            readings = gp.scan(fast=fast)
     except Exception:
         readings = []
 

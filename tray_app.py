@@ -293,7 +293,7 @@ class TrayApp:
 
     def _worker(self, hwnd: int) -> None:
         try:
-            snaps = dr.snapshot()
+            snaps = dr.snapshot(fast=True)
             self.snapshots = {s.key: s for s in snaps}
         except Exception:
             self.log("读取异常:\n" + traceback.format_exc())
@@ -316,11 +316,8 @@ class TrayApp:
             USER32.SetForegroundWindow(hwnd)
             self.log("界面已恢复/前置")
             return
-        import subprocess
         try:
-            subprocess.Popen([tc.pythonw_path(),
-                              os.path.join(BASE_DIR, "battery_panel.py")],
-                             cwd=BASE_DIR, creationflags=0x00000008)
+            tc.launch_panel()
             self.log("已打开界面")
         except Exception as e:
             self.log(f"打开界面失败：{e}")
@@ -406,12 +403,12 @@ class TrayApp:
         return 0
 
 
-def main() -> int:
+def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description="托盘电量监视器")
     parser.add_argument("--debug", action="store_true", help="前台运行并输出日志")
     parser.add_argument("--status", action="store_true", help="打印当前状态")
     parser.add_argument("--quit", action="store_true", help="让正在运行的实例退出")
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
     if args.status:
         cfg = tc.load_config()

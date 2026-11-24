@@ -14,7 +14,6 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import subprocess
 import sys
 import time
 
@@ -97,8 +96,7 @@ def install() -> int:
 
 
 def open_panel() -> int:
-    subprocess.Popen([tc.pythonw_path(), os.path.join(BASE_DIR, "battery_panel.py")],
-                     cwd=BASE_DIR, creationflags=0x00000008)
+    tc.launch_panel()
     print("已打开电量面板")
     return 0
 
