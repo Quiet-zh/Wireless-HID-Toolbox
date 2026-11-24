@@ -199,6 +199,9 @@ E-HUB 的显示不是即时值：它的 `batteryHandleInit` 在 60 秒内会保�
 3. **鼠标休眠**：2.4G 鼠标静置几分钟后会休眠，dongle 仍能回 `0x03`，但 `[5] = 0`。
    此时动一下鼠标或按一下按键即可；工具会给出明确提示并自动重试。
 4. **不写日志**：默认不产生任何日志文件，`--debug` 才打印原始报文。
+5. **面板/托盘并发**：两个进程可能在同一秒刷新，键盘的 `AA 10/30/11` 是会话协议，
+   用 `Local\ExtBatteryHidReadLock` 命名互斥体把整次读取串行化；实测两个进程
+   各读 10 次，20/20 成功。
 
 ## 鼠标测试面板（可视化）
 
@@ -274,6 +277,7 @@ python keyboard_battery.py --watch 30
 | `battery_panel.py` | Tkinter 双设备电量面板（鼠标 + 键盘 / 自启 / 桌面链接 / 退出托盘） |
 | `tray_app.py` | 托盘常驻（两个数字图标 + SetTimer + 单实例） |
 | `tray_common.py` | 托盘配置、开机自启、桌面链接、IPC、僵尸清理 |
+| `device_lock.py` | 跨进程命名互斥体，串行化面板/托盘同时读取 |
 | `win_icon.py` / `win_link.py` / `win_shell.py` | 纯 ctypes 图标 / 软连接 / .lnk |
 | `app.py` | 完整调试版（Feature/Output/Input、探测 Report ID、手动标定） |
 | `debug_tool.py` | 枚举 / 监听 / 发原始命令 / 唤醒检查 |

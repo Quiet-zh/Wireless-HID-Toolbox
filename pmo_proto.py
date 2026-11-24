@@ -26,6 +26,7 @@ import time
 from dataclasses import dataclass
 
 import hid_win
+import device_lock
 
 VID = 0x36B0
 PID_DONGLE = 0x3002
@@ -137,6 +138,7 @@ def _command(dev, cmd: int, payload_size: int, total_payload: int,
     return _read_reply(dev, cmd, timeout)
 
 
+@device_lock.locked
 def read_battery(interface=None, timeout: float = 1.2,
                  retries: int = 3, debug: bool = False) -> KeyboardBattery:
     """读取一次 WAVE75 电量。键盘休眠 / 未连 2.4G 时抛 PmoError。"""

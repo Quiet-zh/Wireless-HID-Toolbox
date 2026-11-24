@@ -34,6 +34,7 @@ from dataclasses import dataclass, field
 from typing import Optional
 
 import hid_win
+import device_lock
 
 VID = 0x3554
 PID = 0xF517
@@ -207,6 +208,7 @@ def _read_matching(dev: "hid_win.HidDevice", cmd: int, timeout: float) -> Option
     return None
 
 
+@device_lock.locked
 def read_battery(interface=None, timeout: float = 1.2,
                  retries: int = 3, debug: bool = False) -> BatteryReading:
     """读取一次电量。
