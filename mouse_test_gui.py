@@ -19,6 +19,7 @@ from collections import deque
 from tkinter import messagebox, ttk
 
 import mouse_events as me
+from keyboard_view import KeyboardView
 
 BG = "#f4f5fa"
 CARD = "#ffffff"
@@ -94,6 +95,9 @@ class MouseTestApp(tk.Tk):
         self.wheel_up = 0
         self.wheel_down = 0
         self.key_count = 0
+        self.max_rollover = 0
+        self.active_keys: set[int] = set()
+        self.locks: set[int] = set()
         self.last_move = (0, 0)
         self.last_screen = (0, 0)
         self.demo_step = 0
@@ -244,6 +248,10 @@ class MouseTestApp(tk.Tk):
         tk.Label(left, text="在此区域内点击、滚动或移动鼠标进行测试",
                  bg=BG, fg=MUTED, font=(UI, 9)).pack(anchor="w", pady=(4, 6))
         self._selector(left, "mouse")
+        tk.Label(left, text="示意图为通用 5 键；不同型号的 DPI/宏键通常不走标准 Raw Input，"
+                            "需要厂商协议才能单独点亮",
+                 bg=BG, fg=FAINT, font=(UI, 8), anchor="w",
+                 wraplength=700, justify="left").pack(fill="x", pady=(0, 6))
 
         self.pad = tk.Canvas(left, bg=BG, highlightthickness=0, height=360)
         self.pad.pack(fill="both", expand=True)
@@ -483,40 +491,57 @@ class MouseTestApp(tk.Tk):
         card.pack(fill="both", expand=True, padx=24, pady=14)
 
         head = tk.Frame(card, bg=CARD)
-        head.pack(fill="x", padx=24, pady=(20, 0))
+        head.pack(fill="x", padx=24, pady=(16, 0))
         tk.Label(head, text="⌨", bg=CARD, fg=ACCENT,
                  font=(UI, 14)).pack(side="left")
         tk.Label(head, text=" 键盘测试区域", bg=CARD, fg=TEXT,
                  font=(UI, 13, "bold")).pack(side="left")
+        tk.Label(head, text="全配列 104 键 · 按下亮起 · 松开熄灭",
+                 bg=CARD, fg=MUTED, font=(UI, 8)).pack(side="right")
         tk.Label(card, text="按键盘上的任意键进行测试（键值只显示，不记录、不落盘）",
                  bg=CARD, fg=MUTED, font=(UI, 9)).pack(anchor="w", padx=24, pady=(4, 0))
         self._selector(card, "keyboard")
 
         body = tk.Frame(card, bg=CARD)
-        body.pack(fill="both", expand=True, padx=24, pady=18)
+        body.pack(fill="both", expand=True, padx=24, pady=(8, 16))
         body.grid_columnconfigure(0, weight=3)
-        body.grid_columnconfigure(1, weight=2)
+        body.grid_columnconfigure(1, weight=1)
         body.grid_rowconfigure(0, weight=1)
 
         left = tk.Frame(body, bg=CHIP, highlightbackground=BORDER,
                         highlightthickness=1)
         left.grid(row=0, column=0, sticky="nsew", padx=(0, 12))
-        self.key_big = tk.Label(left, text="—", bg=CHIP, fg=TEXT,
-                                font=(UI, 44, "bold"))
-        self.key_big.pack(expand=True)
-        self.key_meta = tk.Label(left, text="等待按键…", bg=CHIP, fg=MUTED,
-                                 font=(MONO, 10))
-        self.key_meta.pack(pady=(0, 24))
+        self.kb_view = KeyboardView(left)
+        self.kb_view.pack(fill="both", expand=True, padx=8, pady=(8, 4))
+
+        status = tk.Frame(left, bg=CHIP)
+        status.pack(fill="x", padx=10, pady=(0, 8))
+        self.key_big = tk.Label(status, text="—", bg=CHIP, fg=TEXT,
+                                font=(UI, 15, "bold"), width=12, anchor="w")
+        self.key_big.pack(side="left")
+        self.key_meta = tk.Label(status, text="等待按键…", bg=CHIP, fg=MUTED,
+                                 font=(MONO, 9), anchor="w")
+        self.key_meta.pack(side="left", padx=(8, 0))
+        tk.Button(status, text="重置", command=self._reset_keyboard,
+                  bg=CARD, fg=MUTED, relief="flat", bd=0,
+                  font=(UI, 8), padx=8, pady=2,
+                  cursor="hand2").pack(side="right")
 
         right = tk.Frame(body, bg=CARD)
         right.grid(row=0, column=1, sticky="nsew")
         self.key_count_label = tk.Label(right, text="按键次数  0", bg=CARD,
                                         fg=TEXT, font=(UI, 11, "bold"))
         self.key_count_label.pack(anchor="w")
+        self.rollover_label = tk.Label(right, text="同时按下  0  ·  最大 0",
+                                       bg=CARD, fg=MUTED, font=(UI, 9))
+        self.rollover_label.pack(anchor="w", pady=(4, 0))
+        self.lock_label = tk.Label(right, text="Caps —   Num —   Scroll —",
+                                   bg=CARD, fg=MUTED, font=(UI, 9))
+        self.lock_label.pack(anchor="w", pady=(2, 8))
         tk.Label(right, text="最近按键", bg=CARD, fg=MUTED,
-                 font=(UI, 9)).pack(anchor="w", pady=(14, 4))
+                 font=(UI, 9)).pack(anchor="w", pady=(4, 4))
         self.key_list = tk.Listbox(
-            right, font=(MONO, 10), relief="flat", bg=CHIP, fg=TEXT,
+            right, font=(MONO, 9), relief="flat", bg=CHIP, fg=TEXT,
             selectbackground=CHIP, selectforeground=TEXT,
             highlightthickness=1, highlightbackground=BORDER, height=12)
         self.key_list.pack(fill="both", expand=True)
@@ -714,17 +739,55 @@ class MouseTestApp(tk.Tk):
 
     # ------------------------------------------------------------- keyboard
     def _on_key(self, ev):
-        if ev.get("action") != "down":
-            return
-        self.key_count += 1
+        vk = int(ev.get("vk", 0) or 0)
         name = ev.get("name", "?")
-        self.key_big.configure(text=name)
-        self.key_meta.configure(
-            text=f"VK 0x{ev.get('vk', 0):02X}   scan 0x{ev.get('scan', 0):02X}")
+        down = ev.get("action") == "down"
+        if down:
+            self.kb_view.set_key(vk, True)
+            if vk not in self.active_keys:
+                self.active_keys.add(vk)
+                self.key_count += 1
+                self.max_rollover = max(self.max_rollover,
+                                        len(self.active_keys))
+                self.key_list.insert(
+                    0, f"{name:<12} VK 0x{vk:02X}")
+                if self.key_list.size() > 12:
+                    self.key_list.delete(12, tk.END)
+                if vk in (0x14, 0x90, 0x91):      # Caps / Num / Scroll
+                    if vk in self.locks:
+                        self.locks.discard(vk)
+                    else:
+                        self.locks.add(vk)
+                    self.kb_view.set_lock(vk, vk in self.locks)
+            self.key_big.configure(text=name)
+            self.key_meta.configure(
+                text=f"VK 0x{vk:02X}   scan 0x{ev.get('scan', 0):02X}")
+        else:
+            self.active_keys.discard(vk)
+            self.kb_view.set_key(vk, False)
+        self._update_keyboard_stats()
+
+    def _update_keyboard_stats(self):
         self.key_count_label.configure(text=f"按键次数  {self.key_count}")
-        self.key_list.insert(0, f"{name:<12} VK 0x{ev.get('vk', 0):02X}")
-        if self.key_list.size() > 12:
-            self.key_list.delete(12, tk.END)
+        self.rollover_label.configure(
+            text=f"同时按下  {len(self.active_keys)}  ·  "
+                 f"最大 {self.max_rollover}")
+        names = {"Caps": 0x14, "Num": 0x90, "Scroll": 0x91}
+        self.lock_label.configure(
+            text="   ".join(
+                f"{label} {'ON' if vk in self.locks else '—'}"
+                for label, vk in names.items()))
+
+    def _reset_keyboard(self):
+        self.active_keys.clear()
+        self.locks.clear()
+        self.key_count = 0
+        self.max_rollover = 0
+        self.kb_view.reset()
+        self.key_big.configure(text="—")
+        self.key_meta.configure(text="等待按键…")
+        self.key_list.delete(0, tk.END)
+        self._update_keyboard_stats()
 
     # ----------------------------------------------------------------- demo
     def _demo_tick(self):
