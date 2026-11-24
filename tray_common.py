@@ -134,7 +134,7 @@ def tray_command() -> list[str]:
     return [pythonw_path(), tray_script()]
 
 
-def launch_tool(script: str) -> None:
+def launch_tool(script: str):
     """从界面打开子工具；打包成 exe 后用 exe 自己的 --tool 分发。"""
     import subprocess
     mapping = {
@@ -149,11 +149,11 @@ def launch_tool(script: str) -> None:
     else:
         cmd = [pythonw_path(), os.path.join(BASE_DIR, script)]
         workdir = BASE_DIR
-    subprocess.Popen(cmd, cwd=workdir, creationflags=0x00000008)
+    return subprocess.Popen(cmd, cwd=workdir, creationflags=0x00000008)
 
 
-def launch_panel() -> None:
-    launch_tool("battery_panel.py")
+def launch_panel():
+    return launch_tool("battery_panel.py")
 
 
 def autostart_command() -> str:
@@ -638,6 +638,26 @@ def cleanup_zombie(wait: float = 2.0) -> bool:
         time.sleep(0.05)
     remove_pid()
     return True
+
+
+def force_kill_tray() -> bool:
+    """消息退出失败时的兜底：只杀“确实是本应用托盘”的进程。"""
+    pid = read_pid()
+    if not pid or pid == os.getpid() or not pid_alive(pid):
+        remove_pid()
+        return False
+    image = os.path.basename(process_image(pid)).lower()
+    cmd = process_cmdline(pid).lower()
+    if IS_FROZEN:
+        ok = image == os.path.basename(sys.executable).lower() \
+            and "--tool" in cmd and "tray" in cmd
+    else:
+        ok = image.startswith("python") and "tray_app" in cmd
+    if not ok:
+        return False
+    killed = kill_pid(pid)
+    remove_pid()
+    return killed
 
 
 def wait_for_tray(timeout: float = 6.0) -> bool:

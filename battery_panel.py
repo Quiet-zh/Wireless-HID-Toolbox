@@ -184,6 +184,7 @@ class BatteryPanel(tk.Tk):
         self._after_id = None
         self.snapshots: list[dr.DeviceSnapshot] = []
         self.cards: dict[str, DeviceCard] = {}
+        self._tool_pids: set[int] = set()
         self._demo_snaps = self._make_demo()
 
         self.auto_var = tk.BooleanVar(value=True)
@@ -270,6 +271,12 @@ class BatteryPanel(tk.Tk):
             bg="#242a35", fg=SUB, activebackground="#2d3543",
             activeforeground=TEXT, relief="flat", bd=0,
             font=("Microsoft YaHei UI", 9), padx=12, pady=5,
+            cursor="hand2").pack(side="left", padx=(8, 0))
+        tk.Button(
+            bar, text="退出应用", command=self._exit_app,
+            bg="#5a2328", fg="#ffb4b4", activebackground="#7a2d34",
+            activeforeground="white", relief="flat", bd=0,
+            font=("Microsoft YaHei UI", 9, "bold"), padx=12, pady=5,
             cursor="hand2").pack(side="left", padx=(8, 0))
         self.status_dot = tk.Label(bar, text="●", bg=BG, fg=FAINT,
                                    font=("Microsoft YaHei UI", 9))
@@ -484,6 +491,41 @@ class BatteryPanel(tk.Tk):
         self._sync_cards()
 
     # ------------------------------------------------------------- 退出
+    def _stop_tools(self):
+        for pid in list(self._tool_pids):
+            try:
+                if tc.pid_alive(pid):
+                    tc.kill_pid(pid)
+            except Exception:
+                pass
+            self._tool_pids.discard(pid)
+
+    def _exit_app(self):
+        if not messagebox.askyesno(
+                "退出应用",
+                "将退出托盘、本面板，以及由本应用打开的测试/调试窗口。\n\n"
+                "确定要完全退出吗？",
+                parent=self):
+            return
+        self._closing = True
+        if self._after_id is not None:
+            try:
+                self.after_cancel(self._after_id)
+            except tk.TclError:
+                pass
+            self._after_id = None
+        self._stop_tools()
+        if tc.is_tray_running():
+            tc.post_to_tray(tc.MSG_QUIT)
+            end = time.monotonic() + 2.0
+            while time.monotonic() < end and tc.is_tray_running():
+                time.sleep(0.1)
+            if tc.is_tray_running():
+                tc.force_kill_tray()
+        tc.clear_panel_hwnd(self._hwnd)
+        tc.consume_panel_show()
+        self.destroy()
+
     def _on_close(self):
         self._closing = True
         tc.clear_panel_hwnd(self._hwnd)
@@ -770,7 +812,9 @@ class SettingsWindow(tk.Toplevel):
 
     def _launch(self, script):
         try:
-            tc.launch_tool(script)
+            proc = tc.launch_tool(script)
+            if proc is not None:
+                self.parent._tool_pids.add(proc.pid)
             self.boot_msg.configure(text=f"已打开 {script}", fg=GREEN)
         except Exception as exc:  # noqa: BLE001
             self.boot_msg.configure(text=f"打开失败：{exc}", fg=RED)
