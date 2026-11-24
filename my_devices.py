@@ -19,34 +19,46 @@ import eweadn_proto as mouse_proto
 import pmo_proto as kb_proto
 import hid_win
 import tray_common as tc
+import last_state
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 
 def read_once(debug: bool = False) -> dict:
     out = {"mouse": None, "keyboard": None,
-           "mouse_error": None, "keyboard_error": None}
+           "mouse_error": None, "keyboard_error": None,
+           "mouse_last": None, "keyboard_last": None}
     try:
         out["mouse"] = mouse_proto.read_battery(debug=debug)
+        last_state.save("mouse", out["mouse"].percent, "ok")
     except mouse_proto.EweadnError as exc:
         out["mouse_error"] = str(exc)
+        out["mouse_last"] = last_state.fallback("mouse", str(exc))
     try:
         out["keyboard"] = kb_proto.read_battery(debug=debug)
+        last_state.save("keyboard", out["keyboard"].percent, "ok")
     except kb_proto.PmoError as exc:
         out["keyboard_error"] = str(exc)
+        out["keyboard_last"] = last_state.fallback("keyboard", str(exc))
     return out
 
 
-def _mouse_line(result) -> str:
+def _mouse_line(result, last=None) -> str:
     if result is None:
+        if last:
+            return (f"EWEADN 8K: 电量 {last['percent']}%"
+                    f"（{last_state.age_text(last['ts'])}，休眠）")
         return "EWEADN 8K: 读取失败"
     charge = "充电中" if result.charging else "未充电"
     return (f"EWEADN 8K: 电量 {result.percent}%"
             f"（{result.voltage_v:.3f} V，{charge}）")
 
 
-def _kb_line(result) -> str:
+def _kb_line(result, last=None) -> str:
     if result is None:
+        if last:
+            return (f"PMO WAVE75: 电量 {last['percent']}%"
+                    f"（{last_state.age_text(last['ts'])}，休眠）")
         return "PMO WAVE75: 读取失败"
     link = "2.4G" if result.dongle else "USB"
     return (f"PMO WAVE75: 电量 {result.percent}%"
@@ -112,18 +124,21 @@ def main(argv=None) -> int:
             payload = {
                 "mouse": result["mouse"].to_dict() if result["mouse"] else None,
                 "keyboard": result["keyboard"].to_dict() if result["keyboard"] else None,
+                "last": {"mouse": result["mouse_last"],
+                         "keyboard": result["keyboard_last"]},
                 "errors": {"mouse": result["mouse_error"],
                            "keyboard": result["keyboard_error"]},
             }
             print(json.dumps(payload, ensure_ascii=False, indent=2))
         else:
-            print(_mouse_line(result["mouse"]))
-            print(_kb_line(result["keyboard"]))
+            print(_mouse_line(result["mouse"], result["mouse_last"]))
+            print(_kb_line(result["keyboard"], result["keyboard_last"]))
             for key, err in (("mouse", result["mouse_error"]),
                              ("keyboard", result["keyboard_error"])):
                 if err:
                     print(f"  [{key}] {err.splitlines()[0]}", file=sys.stderr)
-        return 0 if (result["mouse"] or result["keyboard"]) else 2
+        return 0 if (result["mouse"] or result["keyboard"]
+                     or result["mouse_last"] or result["keyboard_last"]) else 2
 
     interval = max(2.0, args.watch)
     print(f"每 {interval:g} 秒刷新一次，Ctrl+C 退出。")
@@ -131,8 +146,8 @@ def main(argv=None) -> int:
         while True:
             result = read_once(args.debug)
             stamp = time.strftime("%H:%M:%S")
-            print(f"[{stamp}] {_mouse_line(result['mouse'])}")
-            print(f"[{stamp}] {_kb_line(result['keyboard'])}")
+            print(f"[{stamp}] {_mouse_line(result['mouse'], result['mouse_last'])}")
+            print(f"[{stamp}] {_kb_line(result['keyboard'], result['keyboard_last'])}")
             time.sleep(interval)
     except KeyboardInterrupt:
         print("\n已退出。")
