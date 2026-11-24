@@ -1,7 +1,9 @@
 # -*- coding: utf-8 -*-
 """device_registry 的纯数据单元测试。"""
+import copy
 import time
 import unittest
+from unittest.mock import patch
 
 import device_registry as dr
 
@@ -32,6 +34,34 @@ class TestRegistry(unittest.TestCase):
                          "keyboard")
         self.assertEqual(dr.kind_label("mouse"), "鼠标")
         self.assertEqual(dr.kind_label("keyboard"), "键盘")
+
+    def test_kind_delete_restore_with_fake_config(self):
+        cfg = {"devices": {}}
+
+        def load():
+            return copy.deepcopy(cfg)
+
+        def save(value):
+            cfg.clear()
+            cfg.update(copy.deepcopy(value))
+
+        with patch.object(dr.tc, "load_config", side_effect=load), \
+                patch.object(dr.tc, "save_config", side_effect=save):
+            dr.set_kind("046D:C53F", "keyboard")
+            row = [d for d in dr.known_devices()
+                   if d["key"] == "046D:C53F"][0]
+            self.assertEqual(row["kind"], "keyboard")
+
+            dr.delete_device("046D:C53F")
+            keys = [d["key"] for d in dr.known_devices()]
+            self.assertNotIn("046D:C53F", keys)
+
+            restored = dr.restore_deleted_devices()
+            self.assertEqual(restored, 1)
+            row = [d for d in dr.known_devices()
+                   if d["key"] == "046D:C53F"][0]
+            self.assertTrue(row["show"])
+            self.assertTrue(row["tray"])
 
     def test_snapshot_text(self):
         s = dr.DeviceSnapshot(
