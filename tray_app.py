@@ -3,11 +3,10 @@
 
 界面约定
 --------
-* 通知区域两个图标：EWEADN 8K 鼠标（纯数字）、PMO WAVE75 键盘（数字带深色底板）。
-  图标颜色随电量变化：绿 ≥60 / 黄 30-59 / 红 <30。
-* **右键图标 → 直接打开简洁界面**（界面里改设置：刷新间隔 / 开机自启 / 退出托盘）。
-* 左键图标 → 立刻刷新一次。
+* 每台在设置里勾选「托盘」的设备一个图标：数字就是电量，颜色随电量变化。
+* **点击图标 → 打开/恢复简洁界面**；双击/左键同时刷新一次。
 * 悬停显示 tooltip：设备名 + 电量 + 更新时间。
+* 设备卡片是否显示、托盘图标是否显示，都在界面「⚙ 设置」里独立配置。
 
 其它
 ----
@@ -37,11 +36,9 @@ from ctypes import wintypes
 from typing import Optional
 
 import hid_win as hw
-import eweadn_proto as mouse_proto
-import pmo_proto as kb_proto
+import device_registry as dr
 import win_icon
 import tray_common as tc
-import last_state
 
 BASE_DIR = tc.BASE_DIR
 APP_NAME = tc.APP_NAME
@@ -155,45 +152,6 @@ KERNEL32.CreateMutexW.restype = ctypes.c_void_p
 KERNEL32.CreateMutexW.argtypes = [ctypes.c_void_p, wintypes.BOOL,
                                   wintypes.LPCWSTR]
 
-TRAY_ICONS = [
-    # (uID, key, 提示名, 是否带底板)
-    (1, "mouse", "EWEADN 8K", False),
-    (2, "keyboard", "PMO WAVE75", True),
-]
-
-
-# --------------------------------------------------------------------------
-# 设备读取（轻量版）
-# --------------------------------------------------------------------------
-def _stale_or(key: str, error: str):
-    last = last_state.fallback(key, error)
-    if last:
-        return last["percent"], last_state.age_text(last["ts"]), last["ts"]
-    return None, error, None
-
-
-def read_mouse() -> tuple[Optional[int], str, Optional[float]]:
-    try:
-        reading = mouse_proto.read_battery(retries=1)
-        last_state.save("mouse", reading.percent, "ok")
-        return reading.percent, "", None
-    except mouse_proto.EweadnError as exc:
-        return _stale_or("mouse", str(exc).splitlines()[0])
-    except Exception as exc:  # noqa: BLE001
-        return _stale_or("mouse", f"读取失败：{exc}")
-
-
-def read_keyboard() -> tuple[Optional[int], str, Optional[float]]:
-    try:
-        reading = kb_proto.read_battery(retries=1)
-        last_state.save("keyboard", reading.percent, "ok")
-        return reading.percent, "", None
-    except kb_proto.PmoError as exc:
-        return _stale_or("keyboard", str(exc).splitlines()[0])
-    except Exception as exc:  # noqa: BLE001
-        return _stale_or("keyboard", f"读取失败：{exc}")
-
-
 # --------------------------------------------------------------------------
 # 托盘程序
 # --------------------------------------------------------------------------
@@ -204,8 +162,9 @@ class TrayApp:
         self.hwnd: Optional[int] = None
         self.wndproc_ref = None
         self.busy = False
-        self.levels = {k: (None, "正在读取…", None) for _, k, _, _ in TRAY_ICONS}
-        self.icons_added = False
+        self.snapshots: dict[str, dr.DeviceSnapshot] = {}
+        self.icon_ids: dict[str, int] = {}
+        self.next_uid = 1
         self.taskbar_created_msg = USER32.RegisterWindowMessageW("TaskbarCreated")
         self.msg_quit = USER32.RegisterWindowMessageW(tc.MSG_QUIT)
         self.msg_reload = USER32.RegisterWindowMessageW(tc.MSG_RELOAD)
@@ -241,42 +200,54 @@ class TrayApp:
         nid.uCallbackMessage = MSG_TRAY_CALLBACK
         return nid
 
-    def _apply_icon(self, action: int, uID: int, key: str, title: str,
-                    plate: bool) -> bool:
-        level, err, stale_ts = self.levels[key]
+    def _apply_icon(self, action: int, uID: int,
+                    snap: dr.DeviceSnapshot) -> bool:
+        level = snap.percent
         text = str(level) if level is not None else "--"
+        plate = snap.key.startswith("36B0")
         nid = self._nid(uID)
         nid.hIcon = win_icon.make_hicon(
-            text, self._color(level, stale=stale_ts is not None), plate)
+            text, self._color(level, stale=snap.stale), plate)
         if level is None:
-            tip = f"{title}：{err or '未知'}"
-        elif stale_ts is not None:
-            tip = (f"{title}：{level}%"
-                   f"（上次更新 {last_state.stamp(stale_ts)}）")
+            tip = f"{snap.name}：{snap.status or '未连接'}"
+        elif snap.stale:
+            tip = (f"{snap.name}：{level}%"
+                   f"（上次更新 {time.strftime('%H:%M', time.localtime(snap.updated))}）")
         else:
-            tip = f"{title}：{level}%（{time.strftime('%H:%M:%S')} 更新）"
+            tip = f"{snap.name}：{level}%（{time.strftime('%H:%M:%S')} 更新）"
         nid.szTip = tip
         return bool(SHELL32.Shell_NotifyIconW(action, ctypes.byref(nid)))
 
-    def add_icons(self) -> None:
-        for uID, key, title, plate in TRAY_ICONS:
-            ok = self._apply_icon(NIM_ADD, uID, key, title, plate)
-            self.log(f"NIM_ADD {title} -> {'ok' if ok else '失败'}")
-        self.icons_added = True
-
-    def update_icons(self) -> None:
-        if not self.icons_added:
-            self.add_icons()
-            return
-        for uID, key, title, plate in TRAY_ICONS:
-            self._apply_icon(NIM_MODIFY, uID, key, title, plate)
-
-    def remove_icons(self) -> None:
-        for uID, _, _, _ in TRAY_ICONS:
-            nid = self._nid(uID)
+    def _sync_icons(self) -> None:
+        desired = {k: s for k, s in self.snapshots.items() if s.tray}
+        for key in list(self.icon_ids):
+            if key in desired:
+                continue
+            uid = self.icon_ids.pop(key)
+            nid = self._nid(uid)
             nid.uFlags = 0
             SHELL32.Shell_NotifyIconW(NIM_DELETE, ctypes.byref(nid))
-        self.icons_added = False
+            self.log(f"NIM_DELETE {key}")
+        for key, snap in desired.items():
+            uid = self.icon_ids.get(key)
+            action = NIM_MODIFY
+            if uid is None:
+                uid = self.next_uid
+                self.next_uid += 1
+                self.icon_ids[key] = uid
+                action = NIM_ADD
+            ok = self._apply_icon(action, uid, snap)
+            if action == NIM_ADD:
+                self.log(f"NIM_ADD {snap.name} ({key}) -> {'ok' if ok else '失败'}")
+        if not desired:
+            self.log("没有勾选托盘图标的设备")
+
+    def remove_icons(self) -> None:
+        for uid in list(self.icon_ids.values()):
+            nid = self._nid(uid)
+            nid.uFlags = 0
+            SHELL32.Shell_NotifyIconW(NIM_DELETE, ctypes.byref(nid))
+        self.icon_ids.clear()
 
     # ---- 定时器 / 刷新 --------------------------------------------------
     def apply_timer(self) -> None:
@@ -304,6 +275,15 @@ class TrayApp:
             self.cfg["autostart"] = actual
             tc.save_config(self.cfg)
             self.log(f"开机自启实际为 {actual}，已同步到配置（未改动系统设置）")
+        devs = self.cfg.get("devices")
+        if isinstance(devs, dict):
+            for key, snap in self.snapshots.items():
+                meta = devs.get(key)
+                if isinstance(meta, dict):
+                    snap.show = bool(meta.get("show", True))
+                    snap.tray = bool(meta.get("tray", True))
+        if self.snapshots:
+            self._sync_icons()
 
     def refresh_now(self) -> None:
         if self.busy or not self.hwnd:
@@ -313,32 +293,35 @@ class TrayApp:
 
     def _worker(self, hwnd: int) -> None:
         try:
-            self.levels["mouse"] = read_mouse()
-            self.levels["keyboard"] = read_keyboard()
+            snaps = dr.snapshot()
+            self.snapshots = {s.key: s for s in snaps}
         except Exception:
             self.log("读取异常:\n" + traceback.format_exc())
         USER32.PostMessageW(hwnd, MSG_REFRESH_DONE, 0, 0)
 
     def on_refresh_done(self) -> None:
         self.busy = False
-        m, k = self.levels["mouse"], self.levels["keyboard"]
-        self.log(f"刷新完成：鼠标={m[0]}（{m[1] or 'ok'}） 键盘={k[0]}（{k[1] or 'ok'}）")
-        self.update_icons()
+        detail = " ".join(
+            f"{s.name}={s.percent if s.percent is not None else '--'}"
+            for s in self.snapshots.values())
+        self.log(f"刷新完成：{detail or '没有设备'}")
+        self._sync_icons()
 
     # ---- 打开简洁界面 ---------------------------------------------------
     def open_ui(self) -> None:
-        hwnd = tc.ui_hwnd()
+        hwnd = tc.panel_hwnd()
         if hwnd:
+            tc.request_panel_show()
             USER32.ShowWindow(hwnd, SW_RESTORE)
             USER32.SetForegroundWindow(hwnd)
-            self.log("简洁界面已在前台")
+            self.log("界面已恢复/前置")
             return
         import subprocess
         try:
             subprocess.Popen([tc.pythonw_path(),
                               os.path.join(BASE_DIR, "battery_panel.py")],
                              cwd=BASE_DIR, creationflags=0x00000008)
-            self.log("已打开简洁界面")
+            self.log("已打开界面")
         except Exception as e:
             self.log(f"打开界面失败：{e}")
 
@@ -359,9 +342,10 @@ class TrayApp:
         if msg == MSG_TRAY_CALLBACK:
             event = int(lparam) & 0xFFFF
             if event == WM_RBUTTONUP:
-                self.open_ui()                     # 右键：直接打开界面
+                self.open_ui()                     # 右键：打开/恢复界面
             elif event in (WM_LBUTTONUP, WM_LBUTTONDBLCLK):
-                self.refresh_now()                 # 左键：立刻刷新
+                self.open_ui()                     # 左键：打开/恢复界面
+                self.refresh_now()                 # 同时刷新一次
             return 0
         if msg == MSG_REFRESH_DONE:
             self.on_refresh_done()
@@ -378,7 +362,8 @@ class TrayApp:
             return 0
         if msg == self.taskbar_created_msg:
             self.log("任务栏重建，重新添加图标")
-            self.add_icons()
+            self.icon_ids.clear()
+            self._sync_icons()
             return 0
         if msg == WM_DESTROY:
             # 重要：销毁窗口后必须让消息循环退出，否则进程会残留成"僵尸"
@@ -409,7 +394,6 @@ class TrayApp:
             return 1
         self.hwnd = hwnd
 
-        self.add_icons()
         self.apply_config()
         self.apply_timer()
         self.refresh_now()
@@ -430,7 +414,14 @@ def main() -> int:
     args = parser.parse_args()
 
     if args.status:
-        print("配置：", json.dumps(tc.load_config(), ensure_ascii=False))
+        cfg = tc.load_config()
+        print("配置：", json.dumps(cfg, ensure_ascii=False))
+        for key, meta in (cfg.get("devices") or {}).items():
+            if not isinstance(meta, dict):
+                continue
+            print(f"  {key}  {meta.get('name', '')}  "
+                  f"卡片={'开' if meta.get('show', True) else '关'}  "
+                  f"托盘={'开' if meta.get('tray', True) else '关'}")
         print("开机自启：", tc.is_autostart_enabled())
         print("启动命令：", tc.autostart_command())
         print("托盘是否在运行：", tc.is_tray_running())
@@ -446,7 +437,7 @@ def main() -> int:
         if tc.is_tray_running():
             # 真有一个正常实例在跑：让它重读配置
             tc.post_to_tray(tc.MSG_RELOAD)
-            print("已经在运行了（托盘里两个数字图标就是它；右键图标打开界面）")
+            print("已经在运行了（托盘里的数字图标就是它；点击图标打开界面）")
             return 0
         # 有人占着锁但已经没有窗口 —— 上一版留下的僵尸进程，清掉后继续启动
         tc.cleanup_zombie()

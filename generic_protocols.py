@@ -805,16 +805,25 @@ def _logitech_one(dev: HidDevice, rid: int, index: int) -> Optional[Reading]:
 
 
 def read_logitech(spec: Spec, ifaces: list[HidInterface]) -> Optional[Reading]:
-    cand = [d for d in ifaces if d.vid == 0x046D and d.output_len]
+    # HID++ 只在厂商集合上；优先 20/32 字节长报文接口（0xFF00:0x0002/0x0004），
+    # 不要先试键盘集合，否则每次要等 7 个索引 × 260ms 超时。
+    cand = [d for d in ifaces
+            if d.vid == 0x046D and d.output_len and d.usage_page >= 0xFF00]
+    cand.sort(key=lambda d: (d.output_len < 20,
+                             d.usage not in (0x0002, 0x0004),
+                             -d.output_len))
     for d in cand:
         try:
             with HidDevice(d.path, write=True) as dev:
-                for rid in (0x11, 0x10):
+                rids = [0x11] if d.output_len >= 20 else [0x10]
+                if d.output_len >= 20:
+                    rids.append(0x10)
+                for rid in rids:
                     need = 20 if rid == 0x11 else 7
                     if dev.caps.OutputReportByteLength and \
                             dev.caps.OutputReportByteLength < need:
                         continue
-                    for index in (0xFF, 1, 2, 3, 4, 5, 6):
+                    for index in (1, 2, 3, 4, 5, 6, 0xFF):
                         r = _logitech_one(dev, rid, index)
                         if r:
                             r.name = _iface_name(ifaces)

@@ -1,35 +1,39 @@
 # -*- coding: utf-8 -*-
-"""battery_panel.py —— 外设电量面板（本机双设备 + 多厂商协议扫描）。
+"""battery_panel.py —— 外设电量面板（设备卡片可选 / 托盘图标独立设置）。
 
-    python battery_panel.py
-    python battery_panel.py --demo    # 用演示数据预览界面
+刷新链路：device_registry.snapshot() -> DeviceCard.update()
+设置窗口：设备卡片/托盘图标、常驻托盘、开机自启、刷新间隔、工具入口。
 """
 from __future__ import annotations
 
 import argparse
+import ctypes
+import os
 import queue
+import subprocess
+import sys
 import threading
 import time
 import tkinter as tk
-from tkinter import ttk
+from tkinter import messagebox, ttk
 
-import eweadn_proto as mouse_proto
-import pmo_proto as kb_proto
-import tray_common as tc
-import last_state
+import device_registry as dr
 import generic_protocols as gp
+import tray_common as tc
+
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 BG = "#0f1115"
 CARD = "#171a21"
-CARD_EDGE = "#232833"
+CARD_EDGE = "#252b37"
+TRACK = "#2a303c"
 TEXT = "#f5f7fa"
-SUB = "#9aa4b2"
-FAINT = "#5d6675"
-GREEN = "#3ddc97"
+SUB = "#a3aab8"
+FAINT = "#6f7788"
+GREEN = "#5ddc8a"
 AMBER = "#f5c451"
-RED = "#ff5c7a"
-ACCENT = "#4f8cff"
-ACCENT_KB = "#a78bfa"
+RED = "#ff6b6b"
+MUTED = "#7d8499"
 
 INTERVALS = {"30 秒": 30, "60 秒": 60, "2 分钟": 120, "5 分钟": 300,
              "10 分钟": 600, "30 分钟": 1800}
@@ -50,465 +54,440 @@ def interval_label(seconds: int) -> str:
     return "60 秒"
 
 
+# --------------------------------------------------------------------------
+# 统一设备卡片
+# --------------------------------------------------------------------------
+
+
 class DeviceCard(tk.Frame):
-    def __init__(self, parent, name: str, subtitle: str, code: str,
-                 accent: str, demo_note: str = ""):
-        super().__init__(parent, bg=CARD, highlightbackground=CARD_EDGE,
-                         highlightthickness=1)
-        self.accent = accent
+    """所有设备共用同一套字段：连接 / 充电 / 电压 / 数据源。"""
+
+    def __init__(self, parent, snap: dr.DeviceSnapshot):
+        super().__init__(parent, bg=CARD, width=440, height=205,
+                         highlightbackground=CARD_EDGE, highlightthickness=1)
+        self.grid_propagate(False)
+        self.key = snap.key
 
         head = tk.Frame(self, bg=CARD)
-        head.pack(fill="x", padx=18, pady=(16, 0))
-        tk.Label(head, text=name, bg=CARD, fg=TEXT,
-                 font=("Microsoft YaHei UI", 14, "bold")).pack(side="left")
-        tk.Label(head, text=subtitle, bg=CARD, fg=FAINT,
-                 font=("Microsoft YaHei UI", 8)).pack(side="left", padx=(8, 0), pady=(3, 0))
-        tk.Label(head, text=code, bg=CARD, fg=FAINT,
-                 font=("Consolas", 9)).pack(side="right", pady=(3, 0))
+        head.pack(fill="x", padx=16, pady=(12, 0))
+        self.name_label = tk.Label(head, text=snap.name, bg=CARD, fg=TEXT,
+                                   font=("Microsoft YaHei UI", 13, "bold"),
+                                   anchor="w")
+        self.name_label.pack(side="left")
+        self.status_label = tk.Label(head, text="", bg=CARD, fg=FAINT,
+                                     font=("Microsoft YaHei UI", 9), anchor="e")
+        self.status_label.pack(side="right")
 
-        self.percent_label = tk.Label(self, text="--", bg=CARD, fg=TEXT,
-                                      font=("Microsoft YaHei UI", 58, "bold"))
-        self.percent_label.pack(pady=(12, 0))
+        self.sub_label = tk.Label(self, text=snap.subtitle, bg=CARD, fg=FAINT,
+                                  font=("Consolas", 8), anchor="w")
+        self.sub_label.pack(fill="x", padx=16, pady=(2, 0))
 
-        self.state_label = tk.Label(self, text="正在连接…", bg=CARD, fg=SUB,
-                                    font=("Microsoft YaHei UI", 10))
-        self.state_label.pack(pady=(0, 10))
+        body = tk.Frame(self, bg=CARD)
+        body.pack(fill="x", padx=16, pady=(4, 0))
+        self.percent_label = tk.Label(body, text="--", bg=CARD, fg=MUTED,
+                                      font=("Microsoft YaHei UI", 40, "bold"),
+                                      width=5, anchor="w")
+        self.percent_label.pack(side="left", anchor="n")
 
-        self.bar = tk.Canvas(self, width=360, height=13, bg=CARD,
+        right = tk.Frame(body, bg=CARD)
+        right.pack(side="left", fill="x", expand=True, padx=(4, 0))
+        self.bar = tk.Canvas(right, width=250, height=12, bg=TRACK,
                              highlightthickness=0)
-        self.bar.pack()
-        self.bar.create_rectangle(0, 0, 360, 13, fill="#242a35", outline="")
-        self._bar_fill = self.bar.create_rectangle(0, 0, 0, 13, fill=accent, outline="")
+        self.bar.pack(fill="x", pady=(14, 6))
+        self.bar_fill = self.bar.create_rectangle(0, 0, 0, 12, fill=TRACK,
+                                                  outline="")
+        self.hint = tk.Label(right, text="", bg=CARD, fg=FAINT,
+                             font=("Microsoft YaHei UI", 8), anchor="w")
+        self.hint.pack(fill="x")
 
         info = tk.Frame(self, bg=CARD)
-        info.pack(fill="x", padx=22, pady=(16, 4))
-        self.info_values = []
-        for i in range(3):
-            box = tk.Frame(info, bg=CARD)
-            box.grid(row=0, column=i, sticky="nsew")
-            info.grid_columnconfigure(i, weight=1)
-            lab = tk.Label(box, text="—", bg=CARD, fg=FAINT,
-                           font=("Microsoft YaHei UI", 8))
-            lab.pack()
-            val = tk.Label(box, text="--", bg=CARD, fg=TEXT,
-                           font=("Microsoft YaHei UI", 10, "bold"))
-            val.pack(pady=(2, 0))
-            self.info_values.append((lab, val))
+        info.pack(fill="x", padx=16, pady=(4, 0))
+        self.info_values = {}
+        for label in ("连接", "充电", "电压", "数据源"):
+            cell = tk.Frame(info, bg=CARD)
+            cell.pack(side="left", expand=True, fill="x")
+            tk.Label(cell, text=label, bg=CARD, fg=FAINT,
+                     font=("Microsoft YaHei UI", 8), anchor="w").pack(fill="x")
+            val = tk.Label(cell, text="—", bg=CARD, fg=SUB,
+                           font=("Microsoft YaHei UI", 9, "bold"), anchor="w")
+            val.pack(fill="x")
+            self.info_values[label] = val
 
         self.time_label = tk.Label(self, text="", bg=CARD, fg=FAINT,
-                                   font=("Microsoft YaHei UI", 8))
-        self.time_label.pack(pady=(16, 14))
+                                   font=("Microsoft YaHei UI", 8), anchor="w")
+        self.time_label.pack(fill="x", padx=16, pady=(4, 0))
 
-    def update_reading(self, percent: int, state: str, color: str,
-                       info: list[tuple[str, str]], time_text: str):
-        self.percent_label.configure(text=f"{percent}%", fg=color)
-        self.state_label.configure(text=state, fg=color if state.startswith("⚡") else SUB)
-        self.bar.coords(self._bar_fill, 0, 0, 360 * percent / 100.0, 13)
-        self.bar.itemconfigure(self._bar_fill, fill=color)
-        for (label, value), (lab_w, val_w) in zip(info, self.info_values):
-            lab_w.configure(text=label)
-            val_w.configure(text=value)
-        self.time_label.configure(text=time_text)
+    def update_reading(self, snap: dr.DeviceSnapshot) -> None:
+        self.key = snap.key
+        self.name_label.configure(text=snap.name)
+        self.sub_label.configure(
+            text=f"{snap.key} · {snap.source or '等待设备'}")
+        if snap.present:
+            if snap.charging is True:
+                state, color = "充电中", GREEN
+            elif snap.status == "full":
+                state, color = "已充满", GREEN
+            elif snap.status == "wired":
+                state, color = "有线连接", GREEN
+            else:
+                state, color = "已连接", FAINT
+        elif snap.stale:
+            stamp = time.strftime("%H:%M", time.localtime(snap.updated))
+            state, color = f"休眠 · 上次更新 {stamp}", AMBER
+        else:
+            state, color = "未连接", RED if snap.show else FAINT
+        self.status_label.configure(text=state, fg=color)
 
-    def update_stale(self, percent: int, reason: str, stamp_text: str,
-                     info: list[tuple[str, str]]):
-        self.percent_label.configure(text=f"{percent}%", fg="#7d8499")
-        self.state_label.configure(text=f"{reason} · 上次更新 {stamp_text}", fg=AMBER)
-        self.bar.coords(self._bar_fill, 0, 0, 360 * percent / 100.0, 13)
-        self.bar.itemconfigure(self._bar_fill, fill="#5d6675")
-        for (label, value), (lab_w, val_w) in zip(info, self.info_values):
-            lab_w.configure(text=label)
-            val_w.configure(text=value)
-        self.time_label.configure(text="缓存值 · 设备唤醒后自动更新", fg=FAINT)
+        pct = snap.percent
+        if pct is None:
+            self.percent_label.configure(text="--", fg=MUTED)
+            self.bar.coords(self.bar_fill, 0, 0, 0, 12)
+            self.bar.itemconfigure(self.bar_fill, fill=TRACK)
+        else:
+            color = MUTED if (snap.stale or not snap.present) else level_color(pct)
+            self.percent_label.configure(text=f"{pct}%", fg=color)
+            self.bar.coords(self.bar_fill, 0, 0, max(1, 250 * pct / 100), 12)
+            self.bar.itemconfigure(self.bar_fill,
+                                   fill=color if not snap.stale else "#5d6675")
+        self.hint.configure(
+            text=("缓存值 · 设备唤醒后自动更新" if snap.stale else
+                  "只读查询 · 不修改设备设置" if snap.present else
+                  "设备暂时不在线"))
+        self.info_values["连接"].configure(text=snap.link or "—")
+        self.info_values["充电"].configure(text=snap.charging_text)
+        self.info_values["电压"].configure(
+            text=f"{snap.voltage_mv / 1000:.3f} V" if snap.voltage_mv else "—")
+        self.info_values["数据源"].configure(text=snap.source or "—")
+        self.time_label.configure(text=snap.updated_text)
 
-    def update_error(self, message: str, hint: str = ""):
-        self.percent_label.configure(text="--", fg=FAINT)
-        self.state_label.configure(text=message, fg=RED)
-        self.bar.coords(self._bar_fill, 0, 0, 0, 13)
-        for lab_w, val_w in self.info_values:
-            val_w.configure(text="--")
-        self.time_label.configure(text=hint, fg=FAINT)
+
+# --------------------------------------------------------------------------
+# 主面板
+# --------------------------------------------------------------------------
 
 
 class BatteryPanel(tk.Tk):
     def __init__(self, demo: bool = False):
         super().__init__()
         self.demo = demo
-        self._busy = False
-        self._closing = False
-        self._after_id = None
+        self.title("外设电量")
+        self.geometry("940x700")
+        self.minsize(880, 620)
+        self.configure(bg=BG)
+        self.protocol("WM_DELETE_WINDOW", self._on_close)
+
         self._queue: queue.Queue = queue.Queue()
         self._ui_queue: queue.Queue = queue.Queue()
-        self._demo_percent = 47
-        self._tray_checked = False
-        self._scanning = False
-        cfg = tc.load_config()
-        self._initial_interval = int(cfg.get("interval", 60) or 60)
-        self.autostart_var = tk.BooleanVar(value=tc.is_autostart_enabled())
-
-        self.title("外设电量")
-        self.configure(bg=BG)
-        self.geometry("940x560")
-        self.minsize(900, 540)
-        self.resizable(True, True)
-        self._center()
-
-        self._build_ui()
-        self.protocol("WM_DELETE_WINDOW", self._on_close)
-        self.after(100, self._pump)
-        self.after(200, self.refresh)
-        if not demo:
-            self.after(500, self._ensure_tray)
-
-    def _center(self):
-        self.update_idletasks()
-        w, h = 940, 560
-        x = (self.winfo_screenwidth() - w) // 2
-        y = (self.winfo_screenheight() - h) // 2
-        self.geometry(f"{w}x{h}+{x}+{y}")
-
-    def _build_ui(self):
-        style = ttk.Style(self)
-        try:
-            style.theme_use("clam")
-        except tk.TclError:
-            pass
-        style.configure("TCombobox", fieldbackground=CARD, background=CARD,
-                        foreground=TEXT, arrowcolor=SUB, bordercolor=CARD_EDGE,
-                        lightcolor=CARD, darkcolor=CARD, padding=2)
-        style.map("TCombobox",
-                  fieldbackground=[("readonly", CARD)],
-                  foreground=[("readonly", TEXT)],
-                  selectbackground=[("readonly", CARD)],
-                  selectforeground=[("readonly", TEXT)])
-
-        header = tk.Frame(self, bg=BG)
-        header.pack(fill="x", padx=24, pady=(18, 6))
-        tk.Label(header, text="外设电量", bg=BG, fg=TEXT,
-                 font=("Microsoft YaHei UI", 16, "bold")).pack(side="left")
-        tk.Label(header, text="本机 HID 读取 · 自动刷新", bg=BG, fg=FAINT,
-                 font=("Microsoft YaHei UI", 9)).pack(side="left", padx=(10, 0), pady=(4, 0))
-
-        cards = tk.Frame(self, bg=BG)
-        cards.pack(fill="both", expand=True, padx=20, pady=(4, 8))
-        cards.grid_columnconfigure(0, weight=1, uniform="card")
-        cards.grid_columnconfigure(1, weight=1, uniform="card")
-        cards.grid_rowconfigure(0, weight=1)
-
-        self.mouse_card = DeviceCard(
-            cards, "EWEADN 8K", "S9 V2 Master · 匠盟", "3554:F517", ACCENT)
-        self.mouse_card.grid(row=0, column=0, sticky="nsew", padx=(0, 8))
-
-        self.kb_card = DeviceCard(
-            cards, "PMO WAVE75", "75% RGB · 三模", "36B0:3002", ACCENT_KB)
-        self.kb_card.grid(row=0, column=1, sticky="nsew", padx=(8, 0))
-
-        controls = tk.Frame(self, bg=BG)
-        controls.pack(fill="x", padx=24, pady=(0, 18))
-
-        self.refresh_btn = tk.Button(
-            controls, text="立即刷新", command=self.refresh,
-            bg=ACCENT, fg="white", activebackground="#3d78e0",
-            activeforeground="white", relief="flat", bd=0,
-            font=("Microsoft YaHei UI", 10, "bold"), padx=18, pady=6,
-            cursor="hand2")
-        self.refresh_btn.pack(side="left")
+        self._busy = False
+        self._pending_refresh = False
+        self._closing = False
+        self._after_id = None
+        self.snapshots: list[dr.DeviceSnapshot] = []
+        self.cards: dict[str, DeviceCard] = {}
+        self._demo_snaps = self._make_demo()
 
         self.auto_var = tk.BooleanVar(value=True)
+        self._build_ui()
+        user32 = ctypes.windll.user32
+        user32.GetAncestor.restype = ctypes.c_void_p
+        user32.GetAncestor.argtypes = [ctypes.c_void_p, ctypes.c_uint]
+        self._hwnd = int(user32.GetAncestor(
+            ctypes.c_void_p(self.winfo_id()), 2) or 0)
+        tc.write_panel_hwnd(self._hwnd)
+        self._hidden = False
+        self.after(300, self._poll_show)
+        self.after(100, self._pump)
+        self.bind("<Unmap>", self._on_unmap)
+        if demo:
+            self._apply_snaps(self._demo_snaps)
+        else:
+            self.after(150, self.refresh)
+            self.after(400, self._update_tray_button)
+
+    # ---------------------------------------------------------------- UI
+    def _build_ui(self):
+        head = tk.Frame(self, bg=BG)
+        head.pack(fill="x", padx=18, pady=(16, 4))
+        tk.Label(head, text="外设电量", bg=BG, fg=TEXT,
+                 font=("Microsoft YaHei UI", 18, "bold")).pack(side="left")
+        tk.Label(head, text="可选设备卡片 · 每设备独立托盘图标",
+                 bg=BG, fg=FAINT,
+                 font=("Microsoft YaHei UI", 9)).pack(side="left",
+                                                      padx=(12, 0), pady=(6, 0))
+        tk.Button(head, text="⚙ 设置", command=self._open_settings,
+                  bg="#242a35", fg=SUB, activebackground="#2d3543",
+                  activeforeground=TEXT, relief="flat", bd=0,
+                  font=("Microsoft YaHei UI", 9), padx=12, pady=4,
+                  cursor="hand2").pack(side="right")
+
+        wrap = tk.Frame(self, bg=BG)
+        wrap.pack(fill="both", expand=True, padx=14, pady=(4, 0))
+        self.canvas = tk.Canvas(wrap, bg=BG, highlightthickness=0)
+        scroll = ttk.Scrollbar(wrap, orient="vertical", command=self.canvas.yview)
+        self.canvas.configure(yscrollcommand=scroll.set)
+        self.canvas.pack(side="left", fill="both", expand=True)
+        scroll.pack(side="right", fill="y")
+
+        self.inner = tk.Frame(self.canvas, bg=BG)
+        self.inner_id = self.canvas.create_window((0, 0), window=self.inner,
+                                                  anchor="nw")
+        self.inner.bind("<Configure>", self._on_inner_configure)
+        self.canvas.bind("<Configure>", self._on_canvas_configure)
+        self.canvas.bind("<Enter>", lambda _e: self.canvas.bind_all(
+            "<MouseWheel>", self._on_wheel))
+        self.canvas.bind("<Leave>", lambda _e: self.canvas.unbind_all(
+            "<MouseWheel>"))
+        self.inner.grid_columnconfigure(0, weight=1)
+        self.inner.grid_columnconfigure(1, weight=1)
+
+        self.empty_label = tk.Label(
+            self.inner, text="没有勾选任何设备卡片\n点右上角「⚙ 设置」选择要显示的设备",
+            bg=BG, fg=FAINT, justify="center",
+            font=("Microsoft YaHei UI", 11))
+
+        bar = tk.Frame(self, bg=BG)
+        bar.pack(fill="x", padx=18, pady=(6, 10))
+        self.refresh_btn = tk.Button(
+            bar, text="立即刷新", command=self.refresh, bg="#4f8cff", fg="white",
+            activebackground="#6aa0ff", activeforeground="white", relief="flat",
+            bd=0, font=("Microsoft YaHei UI", 9, "bold"), padx=16, pady=5,
+            cursor="hand2")
+        self.refresh_btn.pack(side="left")
         tk.Checkbutton(
-            controls, text="自动刷新", variable=self.auto_var, bg=BG, fg=SUB,
+            bar, text="自动刷新", variable=self.auto_var, bg=BG, fg=SUB,
             selectcolor=BG, activebackground=BG, activeforeground=TEXT,
             font=("Microsoft YaHei UI", 9), bd=0, highlightthickness=0,
-            command=self._schedule_next).pack(side="left", padx=(14, 6))
-
-        self.interval_var = tk.StringVar(value=interval_label(self._initial_interval))
-        combo = ttk.Combobox(controls, textvariable=self.interval_var,
-                             values=list(INTERVALS), state="readonly", width=7,
-                             font=("Microsoft YaHei UI", 9))
-        combo.pack(side="left")
-        combo.bind("<<ComboboxSelected>>", lambda _e: self._on_interval_changed())
-
-        tk.Checkbutton(
-            controls, text="开机自启", variable=self.autostart_var, bg=BG, fg=SUB,
-            selectcolor=BG, activebackground=BG, activeforeground=TEXT,
-            font=("Microsoft YaHei UI", 9), bd=0, highlightthickness=0,
-            command=self._toggle_autostart).pack(side="left", padx=(14, 8))
-
-        tk.Button(controls, text="桌面链接", command=self._desktop_links,
-                  bg="#242a35", fg=SUB, activebackground="#2d3543",
-                  activeforeground=TEXT, relief="flat", bd=0,
-                  font=("Microsoft YaHei UI", 9), padx=10, pady=3,
-                  cursor="hand2").pack(side="left", padx=(0, 6))
-
-        tk.Button(controls, text="扫描全部", command=self._scan_all,
-                  bg="#242a35", fg=SUB, activebackground="#2d3543",
-                  activeforeground=TEXT, relief="flat", bd=0,
-                  font=("Microsoft YaHei UI", 9), padx=10, pady=3,
-                  cursor="hand2").pack(side="left", padx=(0, 6))
-
-        tk.Button(controls, text="退出托盘", command=self._quit_tray,
-                  bg="#242a35", fg=SUB, activebackground="#2d3543",
-                  activeforeground=TEXT, relief="flat", bd=0,
-                  font=("Microsoft YaHei UI", 9), padx=10, pady=3,
-                  cursor="hand2").pack(side="left", padx=(0, 6))
-
-        tk.Button(controls, text="最小化", command=self.iconify,
-                  bg="#242a35", fg=SUB, activebackground="#2d3543",
-                  activeforeground=TEXT, relief="flat", bd=0,
-                  font=("Microsoft YaHei UI", 9), padx=10, pady=3,
-                  cursor="hand2").pack(side="left")
-
-        self.status_dot = tk.Label(controls, text="●", bg=BG, fg=FAINT,
+            command=self._schedule_next).pack(side="left", padx=(14, 0))
+        self.tray_btn = tk.Button(
+            bar, text="常驻托盘", command=self._toggle_tray,
+            bg="#242a35", fg=SUB, activebackground="#2d3543",
+            activeforeground=TEXT, relief="flat", bd=0,
+            font=("Microsoft YaHei UI", 9), padx=12, pady=5,
+            cursor="hand2")
+        self.tray_btn.pack(side="left", padx=(18, 0))
+        tk.Button(
+            bar, text="最小化到托盘", command=self._hide_to_tray,
+            bg="#242a35", fg=SUB, activebackground="#2d3543",
+            activeforeground=TEXT, relief="flat", bd=0,
+            font=("Microsoft YaHei UI", 9), padx=12, pady=5,
+            cursor="hand2").pack(side="left", padx=(8, 0))
+        self.status_dot = tk.Label(bar, text="●", bg=BG, fg=FAINT,
                                    font=("Microsoft YaHei UI", 9))
-        self.status_dot.pack(side="right", padx=(0, 4))
-        self.status_label = tk.Label(controls, text="", bg=BG, fg=FAINT,
+        self.status_dot.pack(side="right", padx=(0, 5))
+        self.status_label = tk.Label(bar, text="准备就绪", bg=BG, fg=FAINT,
                                      font=("Microsoft YaHei UI", 9))
         self.status_label.pack(side="right")
 
-    # -------------------------------------------------------------- refresh
+    def _on_inner_configure(self, _event=None):
+        self.canvas.configure(scrollregion=self.canvas.bbox("all"))
+
+    def _on_canvas_configure(self, event):
+        self.canvas.itemconfigure(self.inner_id, width=event.width)
+
+    def _on_wheel(self, event):
+        self.canvas.yview_scroll(int(-event.delta / 120), "units")
+
+    # ------------------------------------------------------------- 刷新
     def refresh(self):
-        if self._closing or self._busy:
+        if self.demo:
+            self._apply_snaps(self._demo_snaps)
+            return
+        if self._busy or self._closing:
             return
         self._busy = True
         self.refresh_btn.configure(state="disabled", text="读取中…")
-        if self.demo:
-            self.after(250, self._demo_result)
-            return
-        threading.Thread(target=self._worker, daemon=True).start()
+        self.status_label.configure(text="正在读取设备…", fg=FAINT)
+        self.status_dot.configure(fg=AMBER)
 
-    def _worker(self):
-        result = {"mouse": None, "kb": None, "mouse_err": None, "kb_err": None,
-                  "mouse_last": None, "kb_last": None}
-        try:
-            reading = mouse_proto.read_battery(retries=2)
-            last_state.save("mouse", reading.percent, "ok")
-            result["mouse"] = reading
-        except mouse_proto.EweadnError as exc:
-            result["mouse_err"] = str(exc)
-            result["mouse_last"] = last_state.fallback("mouse", str(exc))
-        except Exception as exc:  # noqa: BLE001
-            result["mouse_err"] = f"未知错误：{exc}"
-        try:
-            reading = kb_proto.read_battery(retries=2)
-            last_state.save("keyboard", reading.percent, "ok")
-            result["kb"] = reading
-        except kb_proto.PmoError as exc:
-            result["kb_err"] = str(exc)
-            result["kb_last"] = last_state.fallback("keyboard", str(exc))
-        except Exception as exc:  # noqa: BLE001
-            result["kb_err"] = f"未知错误：{exc}"
-        self._queue.put(result)
+        def worker():
+            try:
+                snaps = dr.snapshot()
+            except Exception as exc:  # noqa: BLE001
+                self._queue.put(("error", str(exc)))
+            else:
+                self._queue.put(("snaps", snaps))
 
-    def _demo_result(self):
-        self._demo_percent = 85 if self._demo_percent == 47 else 47
-        mouse = mouse_proto.BatteryReading(
-            percent=self._demo_percent, level_raw=self._demo_percent,
-            charging=False, voltage_mv=4040, online=True,
-            percent_source="voltage")
-        kb = kb_proto.KeyboardBattery(
-            percent=65 if self._demo_percent == 85 else 35, charging=0, link=0,
-            raw=b"", dongle=True, timestamp=time.time())
-        self._queue.put({"mouse": mouse, "kb": kb, "mouse_err": None, "kb_err": None})
+        threading.Thread(target=worker, daemon=True).start()
 
     def _pump(self):
         if self._closing:
             return
         try:
             while True:
-                result = self._queue.get_nowait()
-                self._apply(result)
+                kind, payload = self._queue.get_nowait()
+                if kind == "snaps":
+                    self._apply_snaps(payload)
+                else:
+                    self._busy = False
+                    self.refresh_btn.configure(state="normal", text="立即刷新")
+                    self.status_label.configure(text=f"读取失败：{payload}", fg=RED)
+                    self.status_dot.configure(fg=RED)
         except queue.Empty:
             pass
         try:
             while True:
                 kind, payload = self._ui_queue.get_nowait()
-                if kind == "status":
+                if kind == "tray":
+                    self._busy = False
+                    self.status_label.configure(
+                        text="托盘已启动" if payload else "托盘启动失败",
+                        fg=GREEN if payload else RED)
+                    self._update_tray_button()
+                elif kind == "tray_then_hide":
+                    if payload:
+                        self._update_tray_button()
+                        self._hide_now()
+                    else:
+                        self.status_label.configure(text="托盘启动失败，无法最小化",
+                                                    fg=RED)
+                        self.status_dot.configure(fg=RED)
+                elif kind == "settings":
                     self.status_label.configure(text=payload, fg=FAINT)
-                    self.status_dot.configure(fg=GREEN if "已" in payload else RED)
-                elif kind == "scan":
-                    self._show_scan(payload)
-                elif kind == "scan_error":
-                    self._scanning = False
-                    self.status_label.configure(text=f"扫描失败：{payload}", fg=RED)
-                    self.status_dot.configure(fg=RED)
         except queue.Empty:
             pass
         self.after(100, self._pump)
 
-    def _apply(self, result):
+    def _apply_snaps(self, snaps):
         self._busy = False
         self.refresh_btn.configure(state="normal", text="立即刷新")
+        self.snapshots = snaps
+        self._sync_cards()
         stamp = time.strftime("%H:%M:%S")
-
-        mouse = result.get("mouse")
-        if mouse:
-            color = level_color(mouse.percent)
-            self.mouse_card.update_reading(
-                mouse.percent,
-                "⚡ 充电中" if mouse.charging else "已连接 · 无线使用中",
-                color,
-                [("电压", f"{mouse.voltage_v:.3f} V"),
-                 ("状态", "充电中" if mouse.charging else "未充电"),
-                 ("设备自报", f"{mouse.level_raw}%")],
-                f"更新于 {stamp} · HID 0xFF02/0x0002")
-        else:
-            msg = (result.get("mouse_err") or "读取失败").splitlines()[0]
-            last = result.get("mouse_last")
-            if last:
-                at = last_state.stamp(last["ts"])
-                self.mouse_card.update_stale(
-                    last["percent"], "鼠标休眠", at,
-                    [("电压", "--"), ("状态", "休眠"), ("上次更新", at)])
-            else:
-                self.mouse_card.update_error(
-                    _short_mouse(msg),
-                    "动一下鼠标或按一下按键唤醒" if "休眠" in msg or "未连接" in msg else "")
-
-        kb = result.get("kb")
-        if kb:
-            color = level_color(kb.percent)
-            self.kb_card.update_reading(
-                kb.percent,
-                "⚡ 充电中" if kb.charging == 1 else (
-                    "已充满" if kb.charging == 2 else "已连接 · 2.4G" if kb.dongle else "已连接 · USB"),
-                color,
-                [("连接", "2.4G" if kb.dongle else "USB"),
-                 ("充电", kb.charging_text),
-                 ("协议", "RDR AA 30")],
-                f"更新于 {stamp} · HID 0xFF60/0x0061")
-        else:
-            msg = (result.get("kb_err") or "读取失败").splitlines()[0]
-            last = result.get("kb_last")
-            if last:
-                at = last_state.stamp(last["ts"])
-                self.kb_card.update_stale(
-                    last["percent"], "键盘休眠", at,
-                    [("连接", "--"), ("充电", "休眠"), ("上次更新", at)])
-            else:
-                self.kb_card.update_error(_short_kb(msg), "键盘休眠或当前固件不支持")
-
-        any_ok = bool(mouse or kb)
-        stale = bool(result.get("mouse_last") or result.get("kb_last"))
-        if any_ok or stale:
-            self.status_dot.configure(fg=AMBER if stale else GREEN)
-            self.status_label.configure(
-                text="部分设备休眠，显示上次电量" if stale else f"已更新 {stamp}",
-                fg=AMBER if stale else FAINT)
-        else:
-            self.status_dot.configure(fg=RED)
-            self.status_label.configure(text="设备暂时没有响应", fg=RED)
-        self._schedule_next()
-
-    def _scan_all(self):
-        if self._scanning:
-            return
-        self._scanning = True
-        self.status_label.configure(text="正在扫描所有协议…", fg=FAINT)
-        self.status_dot.configure(fg=AMBER)
-
-        def worker():
-            try:
-                readings = gp.scan()
-            except Exception as exc:  # noqa: BLE001
-                self._ui_queue.put(("scan_error", str(exc)))
-            else:
-                self._ui_queue.put(("scan", readings))
-
-        threading.Thread(target=worker, daemon=True).start()
-
-    def _show_scan(self, readings):
-        self._scanning = False
-        if not readings:
-            self.status_label.configure(text="没有发现已收录协议的设备", fg=AMBER)
-            return
-        self.status_label.configure(
-            text=f"扫描完成：{len(readings)} 台设备", fg=GREEN)
+        visible = sum(1 for s in snaps if s.show)
+        self.status_label.configure(text=f"已更新 {stamp} · {visible} 张卡片",
+                                    fg=FAINT)
         self.status_dot.configure(fg=GREEN)
+        self._schedule_next()
+        if self._pending_refresh:
+            self._pending_refresh = False
+            self.after(100, self.refresh)
 
-        win = tk.Toplevel(self)
-        win.title("已收录设备")
-        win.geometry("760x380")
-        win.configure(bg=BG)
-        win.transient(self)
-        text = tk.Text(win, bg="#10131a", fg=SUB, insertbackground=SUB,
-                       relief="flat", font=("Consolas", 9), wrap="word",
-                       padx=12, pady=10)
-        scroll = ttk.Scrollbar(win, orient="vertical", command=text.yview)
-        text.configure(yscrollcommand=scroll.set)
-        text.pack(side="left", fill="both", expand=True)
-        scroll.pack(side="right", fill="y")
-        for i, r in enumerate(readings, 1):
-            pct = f"{r.percent}%" if r.percent is not None else "--"
-            text.insert("end", f"[{i}] {r.name}  ({r.key})\n")
-            text.insert("end", f"    {pct}  {r.charging_text}"
-                               f"{'  ' + str(r.voltage_mv) + ' mV' if r.voltage_mv else ''}\n")
-            text.insert("end", f"    {r.source}\n")
-            if r.detail:
-                text.insert("end", f"    {r.detail}\n")
-            text.insert("end", "\n")
-        text.configure(state="disabled")
+    def _sync_cards(self):
+        visible = [s for s in self.snapshots if s.show]
+        wanted = {s.key for s in visible}
+        for key in list(self.cards):
+            if key not in wanted:
+                self.cards.pop(key).destroy()
+        for i, snap in enumerate(visible):
+            card = self.cards.get(snap.key)
+            if card is None:
+                card = DeviceCard(self.inner, snap)
+                self.cards[snap.key] = card
+            card.update_reading(snap)
+            card.grid_configure(row=i // 2, column=i % 2, padx=6, pady=6,
+                                sticky="nsew")
+        if visible:
+            self.empty_label.grid_forget()
+        else:
+            self.empty_label.grid(row=0, column=0, columnspan=2, pady=80)
+        self.inner.update_idletasks()
+        self.canvas.configure(scrollregion=self.canvas.bbox("all"))
 
-    def _ensure_tray(self):
-        if self._tray_checked:
+    def _schedule_next(self):
+        if self._after_id is not None:
+            try:
+                self.after_cancel(self._after_id)
+            except tk.TclError:
+                pass
+            self._after_id = None
+        if self._closing or self.demo or not self.auto_var.get():
             return
-        self._tray_checked = True
+        seconds = int(tc.load_config().get("interval", 60) or 60)
+        self._after_id = self.after(max(10, seconds) * 1000, self.refresh)
+
+    # ------------------------------------------------------------- 托盘
+    def _update_tray_button(self):
+        running = tc.is_tray_running()
+        self.tray_btn.configure(text="退出托盘" if running else "常驻托盘")
+        if running:
+            self.status_dot.configure(fg=GREEN)
+
+    def _toggle_tray(self):
         if tc.is_tray_running():
-            self._ui_queue.put(("status", "托盘已在运行"))
+            tc.post_to_tray(tc.MSG_QUIT)
+            self.status_label.configure(text="正在退出托盘…", fg=FAINT)
+            self.after(900, self._update_tray_button)
+            self.after(2200, self._update_tray_button)
             return
 
         def worker():
             ok = tc.start_tray_app()
-            self._ui_queue.put(("status", "托盘已启动" if ok else "托盘启动失败"))
+            self._ui_queue.put(("tray", ok))
+
+        threading.Thread(target=worker, daemon=True).start()
+        self.after(800, self._update_tray_button)
+        self.after(2200, self._update_tray_button)
+
+    def _on_unmap(self, _event=None):
+        """标题栏最小化/任务栏最小化也改成缩到托盘。"""
+        if self._closing or self._hidden:
+            return
+        try:
+            if self.state() == "iconic":
+                self.after(10, self._hide_to_tray)
+        except tk.TclError:
+            pass
+
+    def _hide_to_tray(self):
+        if tc.is_tray_running():
+            self._hide_now()
+            return
+        self.status_label.configure(text="正在启动常驻托盘…", fg=FAINT)
+        self.status_dot.configure(fg=AMBER)
+
+        def worker():
+            ok = tc.start_tray_app()
+            self._ui_queue.put(("tray_then_hide", ok))
 
         threading.Thread(target=worker, daemon=True).start()
 
-    def _on_interval_changed(self):
-        seconds = INTERVALS.get(self.interval_var.get(), 60)
-        cfg = tc.load_config()
-        cfg["interval"] = seconds
-        tc.save_config(cfg)
-        tc.post_to_tray(tc.MSG_RELOAD)
-        self._schedule_next()
+    def _hide_now(self):
+        tc.write_panel_hwnd(self._hwnd)
+        self.withdraw()
+        self._hidden = True
 
-    def _toggle_autostart(self):
-        try:
-            tc.set_autostart(bool(self.autostart_var.get()))
-        except Exception as exc:  # noqa: BLE001
-            self.status_label.configure(text=f"开机自启设置失败：{exc}", fg=RED)
-        actual = tc.is_autostart_enabled()
-        self.autostart_var.set(actual)
-        cfg = tc.load_config()
-        cfg["autostart"] = actual
-        tc.save_config(cfg)
-        self.status_label.configure(
-            text="开机自启已开启" if actual else "开机自启已关闭",
-            fg=GREEN if actual else FAINT)
-
-    def _desktop_links(self):
-        result = tc.install_desktop_links()
-        errors = result.get("errors") or []
-        if errors:
-            self.status_label.configure(text=f"桌面链接：{errors[0]}", fg=RED)
-        else:
-            self.status_label.configure(text="桌面链接已创建（目录 + 启动脚本）", fg=GREEN)
-
-    def _quit_tray(self):
-        ok = tc.post_to_tray(tc.MSG_QUIT)
-        self.status_label.configure(
-            text="已通知托盘退出" if ok else "托盘没在运行",
-            fg=FAINT if ok else RED)
-
-    def _schedule_next(self):
-        if self._after_id is not None:
-            self.after_cancel(self._after_id)
-            self._after_id = None
-        if self._closing or not self.auto_var.get():
+    def _poll_show(self):
+        if self._closing:
             return
-        seconds = INTERVALS.get(self.interval_var.get(), 60)
-        self._after_id = self.after(seconds * 1000, self.refresh)
+        if tc.consume_panel_show():
+            try:
+                self.deiconify()
+                self.lift()
+                self.focus_force()
+                self._hidden = False
+            except tk.TclError:
+                pass
+        self.after(300, self._poll_show)
 
+    # ------------------------------------------------------------- 设置
+    def _open_settings(self):
+        SettingsWindow(self, demo=self.demo, on_change=self._settings_changed)
+
+    def _settings_changed(self):
+        self._apply_config_flags()
+        if not self.demo:
+            if self._busy:
+                self._pending_refresh = True
+            else:
+                self.after(120, self.refresh)
+        self._update_tray_button()
+
+    def _apply_config_flags(self):
+        """设置里改卡片/托盘开关后，立即反映到已经渲染的卡片，不必等扫描。"""
+        meta = {d["key"]: d for d in dr.known_devices()}
+        for snap in self.snapshots:
+            m = meta.get(snap.key)
+            if not m:
+                continue
+            snap.show = bool(m["show"])
+            snap.tray = bool(m["tray"])
+        self._sync_cards()
+
+    # ------------------------------------------------------------- 退出
     def _on_close(self):
         self._closing = True
+        tc.clear_panel_hwnd(self._hwnd)
+        tc.consume_panel_show()
         if self._after_id is not None:
             try:
                 self.after_cancel(self._after_id)
@@ -516,32 +495,293 @@ class BatteryPanel(tk.Tk):
                 pass
         self.destroy()
 
+    # ------------------------------------------------------------- demo
+    @staticmethod
+    def _make_demo() -> list[dr.DeviceSnapshot]:
+        now = time.time()
+        return [
+            dr.DeviceSnapshot(
+                key="3554:F517", name="EWEADN 8K", vid=0x3554, pid=0xF517,
+                percent=85, charging=False, status="discharging",
+                voltage_mv=4040, source="EWEADN", link="2.4G",
+                detail="设备自报 85%", updated=now, stale=False,
+                present=True, show=True, tray=True),
+            dr.DeviceSnapshot(
+                key="36B0:WAVE75", name="PMO WAVE75", vid=0x36B0, pid=0x3002,
+                percent=65, charging=False, status="discharging",
+                voltage_mv=None, source="PMO RDR", link="2.4G",
+                detail="未充电", updated=now, stale=False,
+                present=True, show=True, tray=True),
+            dr.DeviceSnapshot(
+                key="046D:C53F", name="罗技 G304 / Lightspeed",
+                vid=0x046D, pid=0xC53F, percent=90, charging=False,
+                status="discharging", voltage_mv=None, source="罗技 HID++",
+                link="HID++", detail="设备索引 1", updated=now,
+                stale=False, present=True, show=True, tray=True),
+        ]
 
-def _short_mouse(message: str) -> str:
-    if "休眠" in message or "未连接" in message:
-        return "鼠标休眠"
-    if "独占" in message:
-        return "接口被占用"
-    if "没有找到" in message:
-        return "未找到鼠标"
-    return message[:12]
+
+# --------------------------------------------------------------------------
+# 设置窗口
+# --------------------------------------------------------------------------
 
 
-def _short_kb(message: str) -> str:
-    if "QMK" in message:
-        return "需 PMO 固件"
-    if "2.4G dongle" in message or "USB 线" in message:
-        return "请用 USB 连接"
-    if "没有找到" in message:
-        return "未找到键盘"
-    if "没有响应" in message:
-        return "键盘休眠"
-    return message[:12]
+class SettingsWindow(tk.Toplevel):
+    def __init__(self, parent: BatteryPanel, demo: bool = False,
+                 on_change=None):
+        super().__init__(parent)
+        self.parent = parent
+        self.demo = demo
+        self.on_change = on_change
+        self.title("设置")
+        self.geometry("640x720")
+        self.minsize(600, 600)
+        self.configure(bg=BG)
+        self.transient(parent)
+        self.device_vars = []
+        self._build()
+
+    def _build(self):
+        tk.Label(self, text="设置", bg=BG, fg=TEXT,
+                 font=("Microsoft YaHei UI", 16, "bold")).pack(
+            anchor="w", padx=18, pady=(14, 4))
+        tk.Label(self, text="设备卡片 / 托盘图标 / 启动与工具",
+                 bg=BG, fg=FAINT,
+                 font=("Microsoft YaHei UI", 9)).pack(anchor="w", padx=18)
+
+        body = tk.Frame(self, bg=BG)
+        body.pack(fill="both", expand=True, padx=18, pady=(8, 0))
+
+        # 设备
+        dev_box = tk.LabelFrame(body, text=" 设备卡片与托盘图标 ",
+                                bg=BG, fg=SUB, bd=0,
+                                font=("Microsoft YaHei UI", 9, "bold"))
+        dev_box.pack(fill="x", pady=(0, 8))
+        self.dev_list = tk.Frame(dev_box, bg=BG)
+        self.dev_list.pack(fill="x", padx=8, pady=6)
+        tk.Button(dev_box, text="扫描并刷新列表", command=self._rescan_devices,
+                  bg="#242a35", fg=SUB, relief="flat", bd=0,
+                  font=("Microsoft YaHei UI", 9), padx=10, pady=3,
+                  cursor="hand2").pack(anchor="w", padx=8, pady=(0, 8))
+        self._reload_devices()
+
+        # 托盘
+        tray_box = tk.LabelFrame(body, text=" 常驻托盘 ", bg=BG, fg=SUB, bd=0,
+                                 font=("Microsoft YaHei UI", 9, "bold"))
+        tray_box.pack(fill="x", pady=(0, 8))
+        row = tk.Frame(tray_box, bg=BG)
+        row.pack(fill="x", padx=8, pady=8)
+        self.tray_btn = tk.Button(
+            row, text="启动常驻托盘", command=self._toggle_tray,
+            bg="#4f8cff", fg="white", relief="flat", bd=0,
+            font=("Microsoft YaHei UI", 9, "bold"), padx=12, pady=4,
+            cursor="hand2")
+        self.tray_btn.pack(side="left")
+        self.tray_state = tk.Label(row, text="", bg=BG, fg=FAINT,
+                                   font=("Microsoft YaHei UI", 9))
+        self.tray_state.pack(side="left", padx=(10, 0))
+        self._refresh_tray_state()
+
+        # 启动
+        boot_box = tk.LabelFrame(body, text=" 开机与入口 ", bg=BG, fg=SUB, bd=0,
+                                 font=("Microsoft YaHei UI", 9, "bold"))
+        boot_box.pack(fill="x", pady=(0, 8))
+        row = tk.Frame(boot_box, bg=BG)
+        row.pack(fill="x", padx=8, pady=8)
+        self.autostart_var = tk.BooleanVar(value=tc.is_autostart_enabled())
+        tk.Checkbutton(
+            row, text="开机自启", variable=self.autostart_var, bg=BG, fg=SUB,
+            selectcolor=BG, activebackground=BG, activeforeground=TEXT,
+            font=("Microsoft YaHei UI", 9), bd=0, highlightthickness=0,
+            command=self._toggle_autostart).pack(side="left")
+        tk.Button(row, text="创建桌面链接", command=self._desktop_links,
+                  bg="#242a35", fg=SUB, relief="flat", bd=0,
+                  font=("Microsoft YaHei UI", 9), padx=10, pady=3,
+                  cursor="hand2").pack(side="left", padx=(12, 0))
+        self.boot_msg = tk.Label(boot_box, text="", bg=BG, fg=FAINT,
+                                 font=("Microsoft YaHei UI", 8), anchor="w")
+        self.boot_msg.pack(fill="x", padx=8, pady=(0, 6))
+
+        # 刷新
+        refresh_box = tk.LabelFrame(body, text=" 刷新 ", bg=BG, fg=SUB, bd=0,
+                                    font=("Microsoft YaHei UI", 9, "bold"))
+        refresh_box.pack(fill="x", pady=(0, 8))
+        row = tk.Frame(refresh_box, bg=BG)
+        row.pack(fill="x", padx=8, pady=8)
+        tk.Label(row, text="托盘/面板间隔", bg=BG, fg=SUB,
+                 font=("Microsoft YaHei UI", 9)).pack(side="left")
+        self.interval_var = tk.StringVar(
+            value=interval_label(int(tc.load_config().get("interval", 60) or 60)))
+        combo = ttk.Combobox(row, textvariable=self.interval_var, width=8,
+                             values=list(INTERVALS), state="readonly",
+                             font=("Microsoft YaHei UI", 9))
+        combo.pack(side="left", padx=(8, 0))
+        combo.bind("<<ComboboxSelected>>", lambda _e: self._interval_changed())
+
+        # 工具
+        tool_box = tk.LabelFrame(body, text=" 工具 ", bg=BG, fg=SUB, bd=0,
+                                 font=("Microsoft YaHei UI", 9, "bold"))
+        tool_box.pack(fill="x", pady=(0, 8))
+        tools = [
+            ("扫描全部设备", self._scan_all),
+            ("查看协议表", self._protocols),
+            ("鼠标测试面板", lambda: self._launch("mouse_test_gui.py")),
+            ("HID 调试台", lambda: self._launch("app.py")),
+            ("打开项目目录", lambda: os.startfile(BASE_DIR)),
+        ]
+        grid = tk.Frame(tool_box, bg=BG)
+        grid.pack(fill="x", padx=8, pady=8)
+        for i, (text, cmd) in enumerate(tools):
+            tk.Button(grid, text=text, command=cmd, bg="#242a35", fg=SUB,
+                      relief="flat", bd=0, font=("Microsoft YaHei UI", 9),
+                      padx=10, pady=4, cursor="hand2").grid(
+                row=i // 3, column=i % 3, sticky="w", padx=(0, 8), pady=3)
+
+        tk.Button(self, text="关闭", command=self.destroy, bg="#242a35",
+                  fg=SUB, relief="flat", bd=0,
+                  font=("Microsoft YaHei UI", 9), padx=18, pady=5,
+                  cursor="hand2").pack(anchor="e", padx=18, pady=(4, 12))
+
+    # ---- 设备列表
+    def _rescan_devices(self):
+        self.boot_msg.configure(text="正在扫描设备…", fg=FAINT)
+        try:
+            dr.snapshot()
+        except Exception as exc:  # noqa: BLE001
+            self.boot_msg.configure(text=f"扫描失败：{exc}", fg=RED)
+            return
+        self._reload_devices()
+        self.boot_msg.configure(text="设备列表已刷新", fg=GREEN)
+
+    def _reload_devices(self):
+        for child in self.dev_list.winfo_children():
+            child.destroy()
+        self.device_vars = []
+        if self.demo:
+            rows = [{"key": s.key, "name": s.name, "show": True, "tray": True}
+                    for s in BatteryPanel._make_demo()]
+        else:
+            rows = dr.known_devices()
+        if not rows:
+            tk.Label(self.dev_list, text="没有已知设备，先扫描一次", bg=BG,
+                     fg=FAINT, font=("Microsoft YaHei UI", 9)).pack(anchor="w")
+            return
+        for row in rows:
+            frame = tk.Frame(self.dev_list, bg=BG)
+            frame.pack(fill="x", pady=2)
+            tk.Label(frame, text=row["name"], bg=BG, fg=TEXT, width=22,
+                     anchor="w", font=("Microsoft YaHei UI", 9, "bold")).pack(
+                side="left")
+            tk.Label(frame, text=row["key"], bg=BG, fg=FAINT, width=13,
+                     anchor="w", font=("Consolas", 8)).pack(side="left")
+            show_var = tk.BooleanVar(value=row["show"])
+            tray_var = tk.BooleanVar(value=row["tray"])
+            self.device_vars.append((row["key"], show_var, tray_var))
+            tk.Checkbutton(frame, text="卡片", variable=show_var, bg=BG,
+                           fg=SUB, selectcolor=BG, activebackground=BG,
+                           activeforeground=TEXT, bd=0, highlightthickness=0,
+                           font=("Microsoft YaHei UI", 8),
+                           command=lambda k=row["key"], v=show_var:
+                           self._set_flag(k, "show", v)).pack(side="left",
+                                                              padx=(6, 0))
+            tk.Checkbutton(frame, text="托盘", variable=tray_var, bg=BG,
+                           fg=SUB, selectcolor=BG, activebackground=BG,
+                           activeforeground=TEXT, bd=0, highlightthickness=0,
+                           font=("Microsoft YaHei UI", 8),
+                           command=lambda k=row["key"], v=tray_var:
+                           self._set_flag(k, "tray", v)).pack(side="left",
+                                                               padx=(8, 0))
+
+    def _set_flag(self, key, field, var):
+        try:
+            if field == "show":
+                dr.set_flags(key, show=var.get())
+            else:
+                dr.set_flags(key, tray=var.get())
+            tc.post_to_tray(tc.MSG_RELOAD)
+            if self.on_change:
+                self.on_change()
+        except Exception as exc:  # noqa: BLE001
+            messagebox.showerror("设置", str(exc), parent=self)
+
+    # ---- 托盘
+    def _refresh_tray_state(self):
+        running = tc.is_tray_running()
+        self.tray_btn.configure(text="退出托盘" if running else "启动常驻托盘",
+                                bg="#a33" if running else "#4f8cff")
+        self.tray_state.configure(text="运行中" if running else "未运行",
+                                  fg=GREEN if running else FAINT)
+
+    def _toggle_tray(self):
+        self.parent._toggle_tray()
+        self.after(1200, self._refresh_tray_state)
+
+    # ---- 启动
+    def _toggle_autostart(self):
+        try:
+            tc.set_autostart(bool(self.autostart_var.get()))
+            cfg = tc.load_config()
+            cfg["autostart"] = tc.is_autostart_enabled()
+            tc.save_config(cfg)
+        except Exception as exc:  # noqa: BLE001
+            self.boot_msg.configure(text=f"设置失败：{exc}", fg=RED)
+            self.autostart_var.set(tc.is_autostart_enabled())
+            return
+        enabled = tc.is_autostart_enabled()
+        self.autostart_var.set(enabled)
+        self.boot_msg.configure(text="开机自启已开启" if enabled else "开机自启已关闭",
+                                fg=GREEN if enabled else FAINT)
+
+    def _desktop_links(self):
+        result = tc.install_desktop_links()
+        errors = result.get("errors") or []
+        self.boot_msg.configure(
+            text=f"桌面链接失败：{errors[0]}" if errors else "桌面链接已创建",
+            fg=RED if errors else GREEN)
+
+    def _interval_changed(self):
+        seconds = INTERVALS.get(self.interval_var.get(), 60)
+        cfg = tc.load_config()
+        cfg["interval"] = seconds
+        tc.save_config(cfg)
+        tc.post_to_tray(tc.MSG_RELOAD)
+        if self.parent:
+            self.parent._schedule_next()
+
+    # ---- 工具
+    def _scan_all(self):
+        self.parent.refresh()
+        self.boot_msg.configure(text="正在扫描全部设备…", fg=FAINT)
+
+    def _protocols(self):
+        win = tk.Toplevel(self)
+        win.title("内置协议表")
+        win.geometry("760x460")
+        win.configure(bg=BG)
+        text = tk.Text(win, bg="#10131a", fg=SUB, relief="flat",
+                       font=("Consolas", 9), wrap="none", padx=10, pady=8)
+        text.pack(fill="both", expand=True)
+        for s in sorted(gp.SPECS, key=lambda x: (x.kind, x.vid)):
+            pids = ("任意" if s.any_pid else "/".join(f"{p:04X}" for p in s.pids)
+                    or "任意")
+            text.insert("end", f"{s.vid:04X}:{pids}  {s.name}  [{s.kind}]\n")
+        text.configure(state="disabled")
+
+    def _launch(self, script):
+        try:
+            subprocess.Popen([tc.pythonw_path(), os.path.join(BASE_DIR, script)],
+                             cwd=BASE_DIR, creationflags=0x00000008)
+            self.boot_msg.configure(text=f"已打开 {script}", fg=GREEN)
+        except Exception as exc:  # noqa: BLE001
+            self.boot_msg.configure(text=f"打开失败：{exc}", fg=RED)
+
+
+# --------------------------------------------------------------------------
 
 
 def main(argv=None) -> int:
-    parser = argparse.ArgumentParser(description="外设电量面板（鼠标 + 键盘）")
-    parser.add_argument("--demo", action="store_true", help="用演示数据预览界面")
+    parser = argparse.ArgumentParser(description="外设电量面板")
+    parser.add_argument("--demo", action="store_true", help="演示数据预览")
     args = parser.parse_args(argv)
     app = BatteryPanel(demo=args.demo)
     app.mainloop()

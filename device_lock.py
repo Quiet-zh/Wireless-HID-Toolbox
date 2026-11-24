@@ -23,24 +23,42 @@ kernel32.CloseHandle.restype = wintypes.BOOL
 kernel32.CloseHandle.argtypes = [ctypes.c_void_p]
 
 MUTEX_NAME = "Local\\ExtBatteryHidReadLock"
+SCAN_MUTEX_NAME = "Local\\ExtBatteryHidScanLock"
 WAIT_OBJECT_0 = 0
 WAIT_ABANDONED = 0x80
 
 
+def _lock(name: str, timeout_ms: int = 15000):
+    handle = kernel32.CreateMutexW(None, False, name)
+    if not handle:
+        return None, False
+    result = kernel32.WaitForSingleObject(handle, timeout_ms)
+    return handle, result in (WAIT_OBJECT_0, WAIT_ABANDONED)
+
+
 @contextlib.contextmanager
 def read_lock(timeout_ms: int = 15000):
-    handle = kernel32.CreateMutexW(None, False, MUTEX_NAME)
-    if not handle:
-        yield
-        return
-    result = kernel32.WaitForSingleObject(handle, timeout_ms)
-    acquired = result in (WAIT_OBJECT_0, WAIT_ABANDONED)
+    handle, acquired = _lock(MUTEX_NAME, timeout_ms)
     try:
         yield
     finally:
-        if acquired:
-            kernel32.ReleaseMutex(handle)
-        kernel32.CloseHandle(handle)
+        if handle:
+            if acquired:
+                kernel32.ReleaseMutex(handle)
+            kernel32.CloseHandle(handle)
+
+
+@contextlib.contextmanager
+def scan_lock(timeout_ms: int = 20000):
+    """整轮多设备扫描的跨进程锁，避免面板/托盘同时枚举和发查询。"""
+    handle, acquired = _lock(SCAN_MUTEX_NAME, timeout_ms)
+    try:
+        yield
+    finally:
+        if handle:
+            if acquired:
+                kernel32.ReleaseMutex(handle)
+            kernel32.CloseHandle(handle)
 
 
 def locked(func):

@@ -11,6 +11,7 @@ import ctypes
 import json
 import os
 import sys
+import time
 from ctypes import wintypes
 from typing import Optional
 
@@ -33,6 +34,8 @@ def _runtime_dir() -> str:
 RUNTIME_DIR = _runtime_dir()
 CONFIG_PATH = os.path.join(RUNTIME_DIR, "config.json")
 PID_FILE = os.path.join(RUNTIME_DIR, "tray_pid.txt")
+PANEL_HWND_FILE = os.path.join(RUNTIME_DIR, "panel_hwnd.txt")
+PANEL_SHOW_FILE = os.path.join(RUNTIME_DIR, "panel_show.req")
 LEGACY_CONFIG_PATH = os.path.join(BASE_DIR, "tray_config.json")
 
 APP_NAME = "ExtBatteryTray"
@@ -45,6 +48,7 @@ UI_TITLE = "外设电量"
 DEFAULT_CONFIG = {
     "interval": 60,        # 托盘轮询间隔（秒）
     "autostart": True,     # 开机自启
+    "devices": {},         # VID:PID -> {name, show, tray, order}
 }
 
 INTERVAL_CHOICES = [(30, "30 秒"), (60, "1 分钟"), (120, "2 分钟"),
@@ -66,6 +70,11 @@ USER32.ShowWindow.restype = wintypes.BOOL
 USER32.ShowWindow.argtypes = [ctypes.c_void_p, ctypes.c_int]
 USER32.SetForegroundWindow.restype = wintypes.BOOL
 USER32.SetForegroundWindow.argtypes = [ctypes.c_void_p]
+USER32.IsWindow.restype = wintypes.BOOL
+USER32.IsWindow.argtypes = [ctypes.c_void_p]
+USER32.GetWindowTextW.restype = ctypes.c_int
+USER32.GetWindowTextW.argtypes = [ctypes.c_void_p, wintypes.LPWSTR,
+                                  ctypes.c_int]
 
 
 # --------------------------------------------------------------------------
@@ -335,6 +344,67 @@ def post_to_tray(msg_name: str) -> bool:
 def ui_hwnd() -> int:
     h = USER32.FindWindowW(None, UI_TITLE)
     return int(h) if h else 0
+
+
+def write_panel_hwnd(hwnd: int) -> None:
+    try:
+        with open(PANEL_HWND_FILE, "w", encoding="utf-8") as f:
+            f.write(str(int(hwnd)))
+    except OSError:
+        pass
+
+
+def clear_panel_hwnd(hwnd: int = 0) -> None:
+    try:
+        if hwnd:
+            with open(PANEL_HWND_FILE, "r", encoding="utf-8") as f:
+                if int(f.read().strip() or 0) != int(hwnd):
+                    return
+        os.remove(PANEL_HWND_FILE)
+    except (OSError, ValueError):
+        pass
+
+
+def panel_hwnd() -> int:
+    """返回面板 HWND；优先用面板隐藏时写下的句柄。"""
+    def is_panel(h: int) -> bool:
+        if not h or not USER32.IsWindow(h):
+            return False
+        try:
+            buf = ctypes.create_unicode_buffer(128)
+            USER32.GetWindowTextW(h, buf, 128)
+            return buf.value == UI_TITLE
+        except Exception:
+            return True
+
+    try:
+        with open(PANEL_HWND_FILE, "r", encoding="utf-8") as f:
+            h = int(f.read().strip() or 0)
+        if is_panel(h):
+            return h
+    except (OSError, ValueError):
+        pass
+    h = ui_hwnd()
+    if h:
+        write_panel_hwnd(h)
+    return h
+
+
+def request_panel_show() -> bool:
+    try:
+        with open(PANEL_SHOW_FILE, "w", encoding="utf-8") as f:
+            f.write(str(int(time.time())))
+        return True
+    except OSError:
+        return False
+
+
+def consume_panel_show() -> bool:
+    try:
+        os.remove(PANEL_SHOW_FILE)
+        return True
+    except OSError:
+        return False
 
 
 def start_tray_app(wait_timeout: float = 6.0) -> bool:
