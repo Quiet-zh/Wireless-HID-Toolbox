@@ -256,7 +256,13 @@ def list_raw_devices():
 
 
 def list_test_devices() -> list[dict]:
-    """按物理设备聚合 Raw Input 鼠标/键盘，供测试界面选择监听对象。"""
+    """按物理设备聚合 Raw Input，只归入一个类别（鼠标或键盘）。
+
+    复合接收器（例如罗技接收器、键盘的 Consumer 集合）会同时暴露
+    mouse/keyboard 两种 Raw Input 接口；如果按接口类型分别列出，就会出现
+    “鼠标列表里有键盘设备”的错位。这里按 VID:PID 聚合后，按已知设备类型/
+    产品名/可用接口选一个主类别，只把该类别的句柄给测试界面。
+    """
     import re
     try:
         import hid_win
@@ -267,7 +273,22 @@ def list_test_devices() -> list[dict]:
     except Exception:
         names = {}
 
-    groups: dict[str, dict] = {}
+    known_kind = {
+        "3554:F517": "mouse",
+        "36B0:3002": "keyboard",
+        "36B0:3009": "keyboard",
+        "046D:C53F": "mouse",
+        "2F4C:1006": "keyboard",
+    }
+    known_label = {
+        "3554:F517": "EWEADN 8K",
+        "36B0:3002": "PMO WAVE75",
+        "36B0:3009": "PMO WAVE75（USB）",
+        "046D:C53F": "罗技 G304 / Lightspeed",
+        "2F4C:1006": "COLORFUL 键盘",
+    }
+
+    raw: dict[str, dict] = {}
     for handle, typ, name in list_raw_devices():
         if typ == RIM_TYPEMOUSE:
             kind = "mouse"
@@ -286,30 +307,48 @@ def list_test_devices() -> list[dict]:
             base, product = "ROOT:KEYBOARD", "系统默认键盘"
         else:
             base, product = f"DEV:{(name or str(handle))[-12:]}", ""
-        key = f"{base}:{kind}"
-        display = product or base
-        if kind == "mouse" and "鼠标" not in display:
-            display += "（鼠标）"
-        if kind == "keyboard" and "键盘" not in display:
-            display += "（键盘）"
-        g = groups.setdefault(key, {
-            "key": key, "kind": kind, "base": base,
-            "label": display,
-            "handles": [],
+        g = raw.setdefault(base, {
+            "base": base, "product": product,
+            "mouse": [], "keyboard": [],
         })
-        g["handles"].append(handle)
+        g[kind].append(handle)
 
-    # 同名设备加序号，避免下拉框里分不清
-    seen: dict[str, int] = {}
     out = []
-    for g in groups.values():
-        label = g["label"]
-        seen[label] = seen.get(label, 0) + 1
-        if seen[label] > 1:
-            label = f"{label} #{seen[label]}"
-        g["label"] = label
-        out.append(g)
-    out.sort(key=lambda g: (0 if g["kind"] == "mouse" else 1, g["label"]))
+    for base, g in raw.items():
+        if base in ("ROOT:MOUSE", "ROOT:KEYBOARD"):
+            kind = "mouse" if base.endswith("MOUSE") else "keyboard"
+        elif base in known_kind:
+            kind = known_kind[base]
+        else:
+            text = (g["product"] or "").lower()
+            if "keyboard" in text or "键盘" in text:
+                kind = "keyboard"
+            elif "mouse" in text or "鼠标" in text:
+                kind = "mouse"
+            elif g["mouse"] and not g["keyboard"]:
+                kind = "mouse"
+            elif g["keyboard"] and not g["mouse"]:
+                kind = "keyboard"
+            else:
+                # 未知复合设备：按“键盘优先”归一个主类别，避免双列表重复
+                kind = "keyboard"
+        handles = g[kind]
+        if not handles:
+            # 已知类型对应的集合不存在时退回另一个集合
+            kind = "keyboard" if kind == "mouse" else "mouse"
+            handles = g[kind]
+        if not handles:
+            continue
+        label = known_label.get(base) or g["product"] or base
+        out.append({
+            "key": f"{base}:{kind}",
+            "kind": kind,
+            "base": base,
+            "label": label,
+            "handles": handles,
+        })
+
+    out.sort(key=lambda d: (0 if d["kind"] == "mouse" else 1, d["label"]))
     return out
 
 
@@ -603,7 +642,9 @@ class RawInputListener:
         ri = ctypes.cast(self._buf, ctypes.POINTER(RAWINPUT)).contents
         handle = int(ri.header.hDevice or 0)
         is_eweadn = handle in self.eweadn_handles
-        if self.allowed_handles is not None and handle not in self.allowed_handles:
+        # hDevice=0 是 SendInput/注入事件（没有具体设备），不能按句柄过滤
+        if handle and self.allowed_handles is not None \
+                and handle not in self.allowed_handles:
             return
         if self.allowed_handles is None and not self.accept_all and not is_eweadn:
             return
