@@ -94,6 +94,15 @@ class MouseTestApp(tk.Tk):
 
         self.wheel_up = 0
         self.wheel_down = 0
+        self.button_counts = {k: 0 for k, _ in BUTTON_LABELS}
+        self.move_times = deque(maxlen=12000)
+        self.rate_peak = 0
+        self.rate_sum = 0
+        self.rate_samples = 0
+        self.last_rate = 0
+        self.trail_var = tk.BooleanVar(value=False)
+        self.last_trail = None
+        self.trail_points = 0
         self.key_count = 0
         self.max_rollover = 0
         self.active_keys: set[int] = set()
@@ -251,7 +260,12 @@ class MouseTestApp(tk.Tk):
         tk.Label(left, text="示意图为通用 5 键；不同型号的 DPI/宏键通常不走标准 Raw Input，"
                             "需要厂商协议才能单独点亮",
                  bg=BG, fg=FAINT, font=(UI, 8), anchor="w",
-                 wraplength=700, justify="left").pack(fill="x", pady=(0, 6))
+                 wraplength=700, justify="left").pack(fill="x", pady=(0, 2))
+        tk.Checkbutton(left, text="绘制轨迹", variable=self.trail_var,
+                       bg=BG, fg=MUTED, activebackground=BG,
+                       activeforeground=TEXT, selectcolor=BG,
+                       font=(UI, 8), bd=0, highlightthickness=0,
+                       command=self._clear_trail).pack(anchor="w", pady=(0, 4))
 
         self.pad = tk.Canvas(left, bg=BG, highlightthickness=0, height=360)
         self.pad.pack(fill="both", expand=True)
@@ -341,6 +355,21 @@ class MouseTestApp(tk.Tk):
             move, text="+0, +0", bg=CHIP, fg=TEXT, font=(MONO, 10))
         self.coord_labels["movement"].pack(side="left", padx=(0, 8), pady=5)
 
+        rate = tk.Frame(grid, bg=CHIP)
+        rate.grid(row=3, column=0, columnspan=2, sticky="nsew", pady=3)
+        tk.Label(rate, text="回报率", bg=CHIP, fg=MUTED, font=(UI, 9),
+                 width=9, anchor="w").pack(side="left", padx=(8, 0), pady=5)
+        self.rate_labels = {}
+        for text, key in (("当前 0 Hz", "now"), ("峰值 0", "peak"),
+                          ("平均 0", "avg")):
+            lab = tk.Label(rate, text=text, bg=CHIP, fg=TEXT,
+                           font=(MONO, 9))
+            lab.pack(side="left", padx=(0, 8), pady=5)
+            self.rate_labels[key] = lab
+        self.trail_label = tk.Label(rate, text="轨迹 0 点", bg=CHIP, fg=FAINT,
+                                    font=(UI, 8))
+        self.trail_label.pack(side="left", padx=(0, 8), pady=5)
+
     def _build_stats_card(self, parent):
         card = self._card(parent)
         card.pack(fill="both", expand=True)
@@ -398,10 +427,13 @@ class MouseTestApp(tk.Tk):
         icon.append(round_rect(c, 36, 18, 56, 50, 10, fill="#9aa2b6", outline=""))
         icon.append(c.create_line(46, 19, 46, 34, fill="#f1f3f9", width=2))
         icon.append(c.create_oval(41, 38, 51, 46, fill="#f1f3f9", outline=""))
-        label_id = c.create_text(46, 72, text=label, fill="#6b7280",
+        label_id = c.create_text(46, 74, text=label, fill="#6b7280",
                                  font=(UI, 9))
+        count_id = c.create_text(46, 58, text="0", fill="#9aa2b6",
+                                 font=(UI, 8, "bold"))
         self.tiles[key] = {
             "canvas": c, "bg": bg_id, "icon": icon, "label": label_id,
+            "count": count_id,
         }
 
     def _set_tile_pressed(self, key, pressed):
@@ -414,12 +446,14 @@ class MouseTestApp(tk.Tk):
             for item in tile["icon"]:
                 c.itemconfigure(item, fill="white")
             c.itemconfigure(tile["label"], fill="white")
+            c.itemconfigure(tile["count"], fill="white")
         else:
             c.itemconfigure(tile["bg"], fill="#f1f3f9", outline=BORDER)
             c.itemconfigure(tile["icon"][0], fill="#9aa2b6")
             c.itemconfigure(tile["icon"][1], fill="#f1f3f9")
             c.itemconfigure(tile["icon"][2], fill="#f1f3f9")
             c.itemconfigure(tile["label"], fill="#6b7280")
+            c.itemconfigure(tile["count"], fill="#9aa2b6")
 
     # ---------------------------------------------------------------- pad
     def _redraw_pad(self, _event=None):
@@ -598,7 +632,9 @@ class MouseTestApp(tk.Tk):
         kind = ev.get("type")
         if kind == "move":
             self.last_move = (ev["dx"], ev["dy"])
+            self.move_times.append(float(ev.get("ts", time.time())))
             self._update_coords(ev)
+            self._draw_trail(ev)
         elif kind == "button":
             self._update_coords(ev)
             self._on_button(ev)
@@ -630,11 +666,40 @@ class MouseTestApp(tk.Tk):
             if self.pad_xy is not None:
                 self.pad.itemconfigure(self.pad_xy, text="X: -, Y: -")
 
+    def _draw_trail(self, ev):
+        if not self.trail_var.get():
+            return
+        sx, sy = ev.get("screen", (0, 0))
+        px, py = self.pad.winfo_rootx(), self.pad.winfo_rooty()
+        x, y = sx - px, sy - py
+        if not (0 <= x < self.pad.winfo_width() and 0 <= y < self.pad.winfo_height()):
+            self.last_trail = None
+            return
+        if self.last_trail is not None:
+            self.pad.create_line(self.last_trail[0], self.last_trail[1], x, y,
+                                 fill="#8b86ff", width=1, tags="trail")
+            self.trail_points += 1
+            self.trail_label.configure(text=f"轨迹 {self.trail_points} 点")
+            self.pad.tag_lower("trail", "mouse")
+        self.last_trail = (x, y)
+
+    def _clear_trail(self):
+        self.pad.delete("trail")
+        self.last_trail = None
+        self.trail_points = 0
+        self.trail_label.configure(text="轨迹 0 点")
+
     def _on_button(self, ev):
         key, action = ev["button"], ev["action"]
         pressed = action == "down"
         if pressed:
             self.pressed_buttons.add(key)
+            if key in self.button_counts:
+                self.button_counts[key] += 1
+                tile = self.tiles.get(key)
+                if tile:
+                    tile["canvas"].itemconfigure(
+                        tile["count"], text=str(self.button_counts[key]))
         else:
             self.pressed_buttons.discard(key)
         self._set_tile_pressed(key, pressed)
@@ -705,6 +770,19 @@ class MouseTestApp(tk.Tk):
         while self.click_times and now - self.click_times[0] > 1.0:
             self.click_times.popleft()
         self.stat_labels["cps"].configure(text=str(len(self.click_times)))
+
+        while self.move_times and now - self.move_times[0] > 1.0:
+            self.move_times.popleft()
+        hz = len(self.move_times)
+        self.last_rate = hz
+        if hz:
+            self.rate_peak = max(self.rate_peak, hz)
+            self.rate_sum += hz
+            self.rate_samples += 1
+        avg = round(self.rate_sum / self.rate_samples) if self.rate_samples else 0
+        self.rate_labels["now"].configure(text=f"当前 {hz} Hz")
+        self.rate_labels["peak"].configure(text=f"峰值 {self.rate_peak}")
+        self.rate_labels["avg"].configure(text=f"平均 {avg}")
         self.after(200, self._tick_cps)
 
     def _reset_stats(self):
@@ -714,6 +792,20 @@ class MouseTestApp(tk.Tk):
         self.last_click = None
         self.prev_click_ts = None
         self.last_interval_ms = None
+        self.move_times.clear()
+        self.rate_peak = 0
+        self.rate_sum = 0
+        self.rate_samples = 0
+        self.last_rate = 0
+        for key in self.button_counts:
+            self.button_counts[key] = 0
+            tile = self.tiles.get(key)
+            if tile:
+                tile["canvas"].itemconfigure(tile["count"], text="0")
+        self.rate_labels["now"].configure(text="当前 0 Hz")
+        self.rate_labels["peak"].configure(text="峰值 0")
+        self.rate_labels["avg"].configure(text="平均 0")
+        self._clear_trail()
         self._refresh_click_labels()
         self.stat_labels["cps"].configure(text="0")
 
