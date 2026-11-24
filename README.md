@@ -118,6 +118,7 @@ python tray_app.py --quit       :: 让正在运行的托盘退出
 ```bat
 python generic_scan.py              :: 扫描并读一次
 python generic_scan.py --list       :: 只列 VID:PID 命中的协议
+python generic_scan.py --protocols  :: 列出内置协议表
 python generic_scan.py --json
 python generic_scan.py --watch 60
 python my_devices.py --scan         :: 同一个入口

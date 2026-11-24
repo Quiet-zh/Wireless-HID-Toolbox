@@ -28,11 +28,30 @@ def _line(r: gp.Reading) -> str:
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description="多厂商 2.4G 外设电量扫描")
     parser.add_argument("--list", action="store_true", help="只列接口/命中的协议")
+    parser.add_argument("--protocols", action="store_true",
+                        help="列出内置协议表（不需要设备）")
     parser.add_argument("--json", action="store_true", help="JSON 输出")
     parser.add_argument("--watch", type=float, metavar="SECONDS",
                         help="循环扫描间隔")
     parser.add_argument("--debug", action="store_true", help="打印未识别设备")
     args = parser.parse_args(argv)
+
+    if args.protocols:
+        rows = []
+        for s in sorted(gp.SPECS, key=lambda x: (x.kind, x.vid, x.pids)):
+            pids = ("任意" if s.any_pid else
+                    "/".join(f"{p:04X}" for p in s.pids) or "任意")
+            rows.append({"name": s.name, "kind": s.kind,
+                         "vid": f"0x{s.vid:04X}", "pids": pids,
+                         "usage_page": (f"0x{s.usage_page:04X}"
+                                        if s.usage_page is not None else ""),
+                         "notes": s.notes})
+        if args.json:
+            print(json.dumps(rows, ensure_ascii=False, indent=2))
+        else:
+            for r in rows:
+                print(f"{r['vid']}:{r['pids']}  {r['name']}  [{r['kind']}]")
+        return 0
 
     if args.list:
         rows = gp.list_supported()
