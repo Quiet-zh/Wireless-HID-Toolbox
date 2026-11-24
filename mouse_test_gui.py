@@ -19,6 +19,7 @@ from collections import deque
 from tkinter import messagebox, ttk
 
 import mouse_events as me
+import window_behavior as wb
 from keyboard_view import KeyboardView
 
 BG = "#f4f5fa"
@@ -918,7 +919,7 @@ class MouseTestApp(tk.Tk):
                 self.listener.stop()
             except Exception:
                 pass
-        self.destroy()
+        wb.handle_close(self)
 
 
 def main(argv=None) -> int:

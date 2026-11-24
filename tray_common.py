@@ -38,6 +38,7 @@ CONFIG_PATH = os.path.join(RUNTIME_DIR, "config.json")
 PID_FILE = os.path.join(RUNTIME_DIR, "tray_pid.txt")
 PANEL_HWND_FILE = os.path.join(RUNTIME_DIR, "panel_hwnd.txt")
 PANEL_SHOW_FILE = os.path.join(RUNTIME_DIR, "panel_show.req")
+APP_ACTION_FILE = os.path.join(RUNTIME_DIR, "app_action.req")
 LEGACY_CONFIG_PATH = os.path.join(BASE_DIR, "tray_config.json")
 
 APP_NAME = "ExtBatteryTray"
@@ -466,6 +467,26 @@ def consume_panel_show() -> bool:
         return True
     except OSError:
         return False
+
+
+def request_app_action(action: str) -> bool:
+    """请求主面板执行 close_all / exit（工具窗口用）。"""
+    try:
+        with open(APP_ACTION_FILE, "w", encoding="utf-8") as f:
+            f.write(action)
+        return True
+    except OSError:
+        return False
+
+
+def consume_app_action() -> str:
+    try:
+        with open(APP_ACTION_FILE, "r", encoding="utf-8") as f:
+            action = f.read().strip()
+        os.remove(APP_ACTION_FILE)
+        return action
+    except OSError:
+        return ""
 
 
 _START_LOCK = threading.Lock()

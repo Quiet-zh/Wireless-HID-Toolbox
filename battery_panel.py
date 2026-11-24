@@ -184,6 +184,7 @@ class BatteryPanel(tk.Tk):
         self._after_id = None
         self._pump_id = None
         self._poll_id = None
+        self._timers = set()
         self.snapshots: list[dr.DeviceSnapshot] = []
         self.cards: dict[str, DeviceCard] = {}
         self._tool_pids: set[int] = set()
@@ -202,14 +203,15 @@ class BatteryPanel(tk.Tk):
         self._hide_pending = False
         self._tray_stopping = False
         self._tray_notice_until = 0.0
-        self._poll_id = self.after(300, self._poll_show)
-        self._pump_id = self.after(100, self._pump)
+        self._pending_close_action = None
+        self._poll_id = self._later(300, self._poll_show)
+        self._pump_id = self._later(100, self._pump)
         self.bind("<Unmap>", self._on_unmap)
         if demo:
             self._apply_snaps(self._demo_snaps)
         else:
-            self.after(150, self.refresh)
-            self.after(400, self._update_tray_button)
+            self._later(150, self.refresh)
+            self._later(400, self._update_tray_button)
 
     # ---------------------------------------------------------------- UI
     def _build_ui(self):
@@ -346,11 +348,17 @@ class BatteryPanel(tk.Tk):
                         self.status_label.configure(text="托盘启动失败，无法最小化",
                                                     fg=RED)
                         self.status_dot.configure(fg=RED)
+                elif kind == "tray_for_close":
+                    mode = self._pending_close_action or "current"
+                    self._pending_close_action = None
+                    if payload:
+                        self._update_tray_button()
+                    self._perform_close(mode)
                 elif kind == "settings":
                     self.status_label.configure(text=payload, fg=FAINT)
         except queue.Empty:
             pass
-        self._pump_id = self.after(100, self._pump)
+        self._pump_id = self._later(100, self._pump)
 
     def _apply_snaps(self, snaps):
         self._busy = False
@@ -366,7 +374,7 @@ class BatteryPanel(tk.Tk):
         self._schedule_next()
         if self._pending_refresh:
             self._pending_refresh = False
-            self.after(100, self.refresh)
+            self._later(100, self.refresh)
 
     def _sync_cards(self):
         visible = [s for s in self.snapshots if s.show]
@@ -399,7 +407,7 @@ class BatteryPanel(tk.Tk):
         if self._closing or self.demo or not self.auto_var.get():
             return
         seconds = int(tc.load_config().get("interval", 60) or 60)
-        self._after_id = self.after(max(10, seconds) * 1000, self.refresh)
+        self._after_id = self._later(max(10, seconds) * 1000, self.refresh)
 
     # ------------------------------------------------------------- 托盘
     def _update_tray_button(self):
@@ -426,8 +434,8 @@ class BatteryPanel(tk.Tk):
             tc.post_to_tray(tc.MSG_QUIT)
             self._tray_stopping = True
             self.status_label.configure(text="正在退出托盘…", fg=FAINT)
-            self.after(900, self._update_tray_button)
-            self.after(2200, self._update_tray_button)
+            self._later(900, self._update_tray_button)
+            self._later(2200, self._update_tray_button)
             return
 
         self._tray_stopping = False
@@ -437,8 +445,8 @@ class BatteryPanel(tk.Tk):
             self._ui_queue.put(("tray", ok))
 
         threading.Thread(target=worker, daemon=True).start()
-        self.after(800, self._update_tray_button)
-        self.after(2200, self._update_tray_button)
+        self._later(800, self._update_tray_button)
+        self._later(2200, self._update_tray_button)
 
     def _on_unmap(self, _event=None):
         """标题栏最小化：按设置缩到托盘，或正常收起到任务栏。"""
@@ -450,7 +458,7 @@ class BatteryPanel(tk.Tk):
         try:
             if self.state() == "iconic":
                 self._hide_pending = True
-                self.after(10, self._deferred_hide)
+                self._later(10, self._deferred_hide)
         except tk.TclError:
             pass
 
@@ -494,7 +502,14 @@ class BatteryPanel(tk.Tk):
                 self._hidden = False
             except tk.TclError:
                 pass
-        self._poll_id = self.after(300, self._poll_show)
+        action = tc.consume_app_action()
+        if action == "all":
+            self._close_all_visible()
+            return
+        if action == "exit":
+            self._exit_app(ask=False)
+            return
+        self._poll_id = self._later(300, self._poll_show)
 
     # ------------------------------------------------------------- 设置
     def _open_settings(self):
@@ -506,7 +521,7 @@ class BatteryPanel(tk.Tk):
             if self._busy:
                 self._pending_refresh = True
             else:
-                self.after(120, self.refresh)
+                self._later(120, self.refresh)
         self._update_tray_button()
 
     def _apply_config_flags(self):
@@ -532,14 +547,58 @@ class BatteryPanel(tk.Tk):
                     pass
         self._on_close()
 
+    def _visible_toplevels(self):
+        out = []
+        for child in self.winfo_children():
+            if not isinstance(child, tk.Toplevel):
+                continue
+            try:
+                if child.winfo_exists() and child.winfo_viewable():
+                    out.append(child)
+            except tk.TclError:
+                pass
+        return out
+
+    def _is_last_window(self) -> bool:
+        """托盘未运行时判断：当前是不是最后一个可见的应用窗口。"""
+        if any(tc.pid_alive(pid) for pid in self._tool_pids):
+            return False
+        return not self._visible_toplevels()
+
+    def _perform_close(self, mode: str):
+        if not tc.is_tray_running() and self._is_last_window():
+            self._exit_app(ask=False)
+            return
+        if mode == "all":
+            self._close_all_visible()
+        else:
+            self._on_close()
+
     def _on_window_close(self):
         mode = tc.load_config().get("window", {}).get("close", "current")
         if mode == "exit":
             self._exit_app()
-        elif mode == "all":
-            self._close_all_visible()
-        else:
-            self._on_close()
+            return
+        if tc.is_tray_running():
+            self._perform_close(mode)
+            return
+
+        keep = messagebox.askyesno(
+            "常驻托盘",
+            "托盘当前没有运行。\n\n是否启动常驻托盘？\n"
+            "选择「否」且这是最后一个窗口时，将完全退出应用。",
+            parent=self)
+        if not keep:
+            self._perform_close(mode)
+            return
+        self._pending_close_action = mode
+        self.status_label.configure(text="正在启动常驻托盘…", fg=FAINT)
+
+        def worker():
+            ok = tc.start_tray_app()
+            self._ui_queue.put(("tray_for_close", ok))
+
+        threading.Thread(target=worker, daemon=True).start()
 
     def _stop_tools(self):
         for pid in list(self._tool_pids):
@@ -550,6 +609,11 @@ class BatteryPanel(tk.Tk):
                 pass
             self._tool_pids.discard(pid)
 
+    def _later(self, ms, func):
+        aid = self.after(ms, func)
+        self._timers.add(aid)
+        return aid
+
     def _cancel_after(self):
         for name in ("_after_id", "_pump_id", "_poll_id"):
             aid = getattr(self, name, None)
@@ -559,9 +623,15 @@ class BatteryPanel(tk.Tk):
                 except tk.TclError:
                     pass
                 setattr(self, name, None)
+        for aid in list(self._timers):
+            try:
+                self.after_cancel(aid)
+            except tk.TclError:
+                pass
+        self._timers.clear()
 
-    def _exit_app(self):
-        if not messagebox.askyesno(
+    def _exit_app(self, ask: bool = True):
+        if ask and not messagebox.askyesno(
                 "退出应用",
                 "将退出托盘、本面板，以及由本应用打开的测试/调试窗口。\n\n"
                 "确定要完全退出吗？",
@@ -632,13 +702,42 @@ class SettingsWindow(tk.Toplevel):
         self.configure(bg=BG)
         self.transient(parent)
         self.device_vars = []
+        self._timer_id = None
+        self.protocol("WM_DELETE_WINDOW", self._on_window_close)
         self._build()
+
+    def destroy(self):
+        if self._timer_id is not None:
+            try:
+                self.after_cancel(self._timer_id)
+            except tk.TclError:
+                pass
+            self._timer_id = None
+        super().destroy()
+
+    def _on_window_close(self):
+        mode = tc.load_config().get("window", {}).get("close", "current")
+        if mode == "exit":
+            self.parent._exit_app()
+        elif mode == "all":
+            self.parent._close_all_visible()
+        else:
+            self.destroy()
+
+    def _close_dialog(self, win):
+        mode = tc.load_config().get("window", {}).get("close", "current")
+        if mode == "exit":
+            self.parent._exit_app()
+        elif mode == "all":
+            self.parent._close_all_visible()
+        else:
+            win.destroy()
 
     def _build(self):
         tk.Label(self, text="设置", bg=BG, fg=TEXT,
                  font=("Microsoft YaHei UI", 16, "bold")).pack(
             anchor="w", padx=18, pady=(14, 4))
-        tk.Label(self, text="设备卡片 / 托盘图标 / 启动与工具",
+        tk.Label(self, text="设备卡片 / 托盘图标 / 窗口按钮 / 启动与工具",
                  bg=BG, fg=FAINT,
                  font=("Microsoft YaHei UI", 9)).pack(anchor="w", padx=18)
 
@@ -845,7 +944,7 @@ class SettingsWindow(tk.Toplevel):
 
     def _toggle_tray(self):
         self.parent._toggle_tray()
-        self.after(1200, self._refresh_tray_state)
+        self._timer_id = self.after(1200, self._refresh_tray_state)
 
     # ---- 启动
     def _toggle_autostart(self):
@@ -898,6 +997,7 @@ class SettingsWindow(tk.Toplevel):
         win.title("内置协议表")
         win.geometry("760x460")
         win.configure(bg=BG)
+        win.protocol("WM_DELETE_WINDOW", lambda: self._close_dialog(win))
         text = tk.Text(win, bg="#10131a", fg=SUB, relief="flat",
                        font=("Consolas", 9), wrap="none", padx=10, pady=8)
         text.pack(fill="both", expand=True)

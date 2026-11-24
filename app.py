@@ -22,6 +22,7 @@ import tkinter as tk
 from tkinter import ttk
 
 import hid_win as hw
+import window_behavior as wb
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 CAL_PATH = os.path.join(BASE_DIR, "calibration.json")
@@ -43,6 +44,7 @@ class DebugApp(tk.Tk):
         self.geometry("1220x780")
         self.minsize(1000, 680)
         self.configure(bg="#f4f5f8")
+        self.protocol("WM_DELETE_WINDOW", self._on_close)
         self.items: list[hw.HidInterface] = []
         self._queue: queue.Queue = queue.Queue()
         self._monitor_stop = threading.Event()
@@ -469,6 +471,10 @@ class DebugApp(tk.Tk):
         except queue.Empty:
             pass
         self.after(100, self._pump)
+
+
+    def _on_close(self):
+        wb.handle_close(self)
 
 
 def main():

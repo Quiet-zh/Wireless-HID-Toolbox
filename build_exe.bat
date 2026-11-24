@@ -17,6 +17,7 @@ python -m PyInstaller --noconfirm --clean --onefile --noconsole ^
   --hidden-import mouse_test_gui ^
   --hidden-import mouse_events ^
   --hidden-import keyboard_view ^
+  --hidden-import window_behavior ^
   --hidden-import app ^
   --hidden-import device_registry ^
   --hidden-import generic_protocols ^
