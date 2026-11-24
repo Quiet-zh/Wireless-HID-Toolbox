@@ -259,19 +259,19 @@ class BatteryPanel(tk.Tk):
             selectcolor=BG, activebackground=BG, activeforeground=TEXT,
             font=("Microsoft YaHei UI", 9), bd=0, highlightthickness=0,
             command=self._schedule_next).pack(side="left", padx=(14, 0))
+        tk.Button(
+            bar, text="最小化", command=self._hide_to_tray,
+            bg="#d97706", fg="white", activebackground="#f59e0b",
+            activeforeground="white", relief="flat", bd=0,
+            font=("Microsoft YaHei UI", 9, "bold"), padx=12, pady=5,
+            cursor="hand2").pack(side="left", padx=(14, 0))
         self.tray_btn = tk.Button(
             bar, text="常驻托盘", command=self._toggle_tray,
             bg="#1f8f4e", fg="white", activebackground="#2ecc71",
             activeforeground="white", relief="flat", bd=0,
             font=("Microsoft YaHei UI", 9, "bold"), padx=12, pady=5,
             cursor="hand2")
-        self.tray_btn.pack(side="left", padx=(18, 0))
-        tk.Button(
-            bar, text="最小化到托盘", command=self._hide_to_tray,
-            bg="#242a35", fg=SUB, activebackground="#2d3543",
-            activeforeground=TEXT, relief="flat", bd=0,
-            font=("Microsoft YaHei UI", 9), padx=12, pady=5,
-            cursor="hand2").pack(side="left", padx=(8, 0))
+        self.tray_btn.pack(side="left", padx=(8, 0))
         tk.Button(
             bar, text="退出应用", command=self._exit_app,
             bg="#5a2328", fg="#ffb4b4", activebackground="#7a2d34",
