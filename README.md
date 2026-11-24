@@ -2,6 +2,7 @@
 
 读取 **迈从 EWEADN S9 V2 Master（2.4G，VID `0x3554` / PID `0xF517`，产品名 `EWEADN 8K`）**
 鼠标电量的小工具。纯 Python 标准库 + `ctypes` 调 Windows HID，**零第三方依赖**。
+另外附带一个 Raw Input 事件监视器，可以看这只鼠标的按键、移动和滚轮。
 
 > 协议参考 [`2.4G-battery-viewer`](../2.4G-battery-viewer) 的方法论，
 > 针对这台鼠标重新逆向并用真机回包验证。设备不在支持列表里的鼠标请勿直接套用。
@@ -133,6 +134,34 @@ E-HUB 的显示不是即时值：它的 `batteryHandleInit` 在 60 秒内会保�
    此时动一下鼠标或按一下按键即可；工具会给出明确提示并自动重试。
 4. **不写日志**：默认不产生任何日志文件，`--debug` 才打印原始报文。
 
+## 监控按键 / 移动（Raw Input）
+
+```bat
+python mouse_events.py --list              :: 列出 Raw Input 设备
+python mouse_events.py --seconds 20        :: 只监视 EWEADN（默认）
+python mouse_events.py --stats             :: 每秒打印速率
+python mouse_events.py --all --seconds 5   :: 调试：显示所有鼠标/键盘
+```
+
+输出示例（真机）：
+
+```text
+[00:10:43.424] mouse   move  dx=+40 dy=-25  (1 包)
+[00:10:44.433] mouse   left   down
+[00:10:44.498] mouse   left   up
+[00:10:46.336] mouse   wheel  up (+120)
+[00:10:50.102] key     VolumeUp   down  (scan=0x30)
+```
+
+- 能监控：左 / 右 / 中键、侧键 1/2、滚轮、横滚、相对移动 `dx/dy`，
+  以及设备键盘接口上出现的按键（多媒体键、DPI 键等如果走键盘 HID 就能看到）。
+- 按 VID/PID 过滤，只接收这只 EWEADN 鼠标/接收器的事件；`--all` 才显示其它设备。
+- 鼠标 / 键盘顶层集合被系统独占，不能直接 `ReadFile`；这里用 Windows Raw Input
+  （`WM_INPUT` + `RIDEV_INPUTSINK`），不需要驱动，也不需要管理员权限。
+- 移动事件按 50 ms 聚合打印，避免 8K 回报率刷屏；`--stats` 可以看真实包速率。
+- 纯厂商自定义、不映射到标准 HID 的按键（例如只在 `0xFF06/0x0002` 私有集合里上报的
+  配置态数据），还需要像电量一样对私有报文做逆向；标准键鼠事件已经覆盖。
+
 ## 目录结构
 
 | 文件 | 说明 |
@@ -141,6 +170,7 @@ E-HUB 的显示不是即时值：它的 `batteryHandleInit` 在 60 秒内会保�
 | `eweadn_battery.py` | 命令行入口（`--once` / `--json` / `--watch` / `--debug`） |
 | `battery_panel.py` | Tkinter 电量面板 |
 | `debug_tool.py` | 枚举 / 监听 / 发原始命令 / 唤醒检查 |
+| `mouse_events.py` | Raw Input 事件监控（按键 / 移动 / 滚轮 / 键盘） |
 | `hid_win.py` | 纯 ctypes 的 Windows HID 访问层（沿用 `2.4G-battery-viewer`） |
 | `tests/test_proto.py` | 纯协议单元测试（不访问硬件） |
 
@@ -150,7 +180,8 @@ E-HUB 的显示不是即时值：它的 `batteryHandleInit` 在 60 秒内会保�
 python -m unittest discover -s tests -v
 ```
 
-8 个用例覆盖：真机抓包帧的校验和、报文归一化、电量解析、电压曲线、单调性。
+8 个用例覆盖：真机抓包帧的校验和、报文归一化、电量解析、电压曲线、单调性；
+另外 5 个用例覆盖 Raw Input 的移动 / 按键 / 滚轮 / 键盘事件解析，共 13 个。
 
 ## 逆向过程（简述）
 
