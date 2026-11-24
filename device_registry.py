@@ -18,9 +18,26 @@ import last_state
 import tray_common as tc
 
 PRIMARY = {
-    "3554:F517": {"name": "EWEADN 8K", "order": 10},
-    "36B0:WAVE75": {"name": "PMO WAVE75", "order": 20},
+    "3554:F517": {"name": "EWEADN 8K", "order": 10, "kind": "mouse"},
+    "36B0:WAVE75": {"name": "PMO WAVE75", "order": 20, "kind": "keyboard"},
 }
+
+DEVICE_KINDS = ("mouse", "keyboard")
+KIND_LABELS = {"mouse": "鼠标", "keyboard": "键盘"}
+
+
+def infer_kind(key: str, name: str = "") -> str:
+    text = f"{key} {name}".lower()
+    if key.startswith("36B0") or "wave" in text or "keyboard" in text \
+            or "键盘" in text:
+        return "keyboard"
+    if key in ("3554:F517", "046D:C53F") or "mouse" in text or "鼠标" in text:
+        return "mouse"
+    return "mouse"
+
+
+def kind_label(kind: str) -> str:
+    return KIND_LABELS.get(kind, "鼠标")
 
 
 @dataclass
@@ -41,6 +58,7 @@ class DeviceSnapshot:
     present: bool = False
     show: bool = True
     tray: bool = True
+    kind: str = "mouse"
 
     @property
     def charging_text(self) -> str:
@@ -135,7 +153,13 @@ def _ensure(cfg: dict) -> dict:
     for key, meta in PRIMARY.items():
         if key not in devs:
             devs[key] = {"name": meta["name"], "show": True, "tray": True,
-                         "order": meta["order"]}
+                         "order": meta["order"], "kind": meta["kind"]}
+            changed = True
+    for key, meta in devs.items():
+        if not isinstance(meta, dict):
+            continue
+        if not meta.get("kind"):
+            meta["kind"] = infer_kind(key, meta.get("name", ""))
             changed = True
     cfg["devices"] = devs
     if changed:
@@ -173,6 +197,7 @@ def snapshot(fast: bool = False) -> list[DeviceSnapshot]:
         if key not in devs:
             devs[key] = {
                 "name": friendly_name(key, r.name),
+                "kind": infer_kind(key, r.name),
                 **_meta_defaults(devs),
             }
             changed = True
@@ -185,9 +210,12 @@ def snapshot(fast: bool = False) -> list[DeviceSnapshot]:
                             key=lambda kv: (int(kv[1].get("order", 0)), kv[0])):
         if not isinstance(meta, dict):
             continue
+        if meta.get("deleted"):
+            continue
         r = by_key.get(key)
         show = bool(meta.get("show", True))
         tray = bool(meta.get("tray", True))
+        kind = meta.get("kind") or infer_kind(key, meta.get("name", ""))
         name = meta.get("name") or friendly_name(key, key)
         if r is not None:
             if r.percent is not None:
@@ -198,7 +226,7 @@ def snapshot(fast: bool = False) -> list[DeviceSnapshot]:
                 voltage_mv=r.voltage_mv, source=_short_source(r.source),
                 link=_link_for(key, r.source, r.detail, r.status),
                 detail=r.detail, updated=time.time(), stale=False,
-                present=True, show=show, tray=tray))
+                present=True, show=show, tray=tray, kind=kind))
             continue
 
         last = last_state.get(key)
@@ -213,7 +241,7 @@ def snapshot(fast: bool = False) -> list[DeviceSnapshot]:
                 charging=None, status="休眠", source="上次缓存",
                 link="—", detail=last.get("detail", ""),
                 updated=float(last["ts"]), stale=True, present=False,
-                show=show, tray=tray))
+                show=show, tray=tray, kind=kind))
             continue
 
         vid, pid = _ids(key)
@@ -221,7 +249,7 @@ def snapshot(fast: bool = False) -> list[DeviceSnapshot]:
             key=key, name=name, vid=vid, pid=pid, percent=None,
             charging=None, status="未连接", source="", link="—",
             detail="还没有发现这个设备", updated=0.0, stale=False,
-            present=False, show=show, tray=tray))
+            present=False, show=show, tray=tray, kind=kind))
 
     if changed:
         tc.save_config(cfg)
@@ -237,12 +265,16 @@ def known_devices() -> list[dict]:
                             key=lambda kv: (int(kv[1].get("order", 0)), kv[0])):
         if not isinstance(meta, dict):
             continue
+        if meta.get("deleted"):
+            continue
         out.append({
             "key": key,
             "name": meta.get("name") or friendly_name(key, key),
             "show": bool(meta.get("show", True)),
             "tray": bool(meta.get("tray", True)),
             "order": int(meta.get("order", 0)),
+            "kind": meta.get("kind") or infer_kind(key,
+                                                   meta.get("name", "")),
         })
     return out
 
@@ -266,3 +298,46 @@ def set_name(key: str, name: str) -> None:
     devs.setdefault(key, {"show": True, "tray": True,
                           "order": _next_order(devs)})["name"] = name.strip()
     tc.save_config(cfg)
+
+
+def set_kind(key: str, kind: str) -> None:
+    if kind not in DEVICE_KINDS:
+        raise ValueError("设备类型只能是 mouse 或 keyboard")
+    cfg = tc.load_config()
+    devs = _ensure(cfg)
+    meta = devs.setdefault(key, {
+        "name": friendly_name(key, key), "show": True, "tray": True,
+        "order": _next_order(devs), "kind": infer_kind(key),
+    })
+    meta["kind"] = kind
+    tc.save_config(cfg)
+
+
+def delete_device(key: str) -> None:
+    """从设置列表和面板/托盘中删除；扫描时不会自动恢复。"""
+    cfg = tc.load_config()
+    devs = _ensure(cfg)
+    meta = devs.setdefault(key, {
+        "name": friendly_name(key, key), "show": True, "tray": True,
+        "order": _next_order(devs), "kind": infer_kind(key),
+    })
+    meta["deleted"] = True
+    meta["show"] = False
+    meta["tray"] = False
+    tc.save_config(cfg)
+
+
+def restore_deleted_devices() -> int:
+    """清除删除标记，恢复被删设备；返回恢复数量。"""
+    cfg = tc.load_config()
+    devs = _ensure(cfg)
+    count = 0
+    for meta in devs.values():
+        if isinstance(meta, dict) and meta.get("deleted"):
+            meta.pop("deleted", None)
+            meta["show"] = True
+            meta["tray"] = True
+            count += 1
+    if count:
+        tc.save_config(cfg)
+    return count

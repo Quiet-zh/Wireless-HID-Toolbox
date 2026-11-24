@@ -26,6 +26,13 @@ class TestRegistry(unittest.TestCase):
                          "罗技 G304 / Lightspeed")
         self.assertEqual(dr.friendly_name("3554:F517", ""), "EWEADN 8K")
 
+    def test_kind_labels(self):
+        self.assertEqual(dr.infer_kind("3554:F517", "EWEADN 8K"), "mouse")
+        self.assertEqual(dr.infer_kind("36B0:WAVE75", "PMO WAVE75"),
+                         "keyboard")
+        self.assertEqual(dr.kind_label("mouse"), "鼠标")
+        self.assertEqual(dr.kind_label("keyboard"), "键盘")
+
     def test_snapshot_text(self):
         s = dr.DeviceSnapshot(
             key="3554:F517", name="EWEADN 8K", vid=0x3554, pid=0xF517,

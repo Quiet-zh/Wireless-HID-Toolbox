@@ -816,10 +816,16 @@ class SettingsWindow(tk.Toplevel):
         dev_box.pack(fill="x", pady=(0, 8))
         self.dev_list = tk.Frame(dev_box, bg=BG)
         self.dev_list.pack(fill="x", padx=8, pady=6)
-        tk.Button(dev_box, text="扫描并刷新列表", command=self._rescan_devices,
+        actions = tk.Frame(dev_box, bg=BG)
+        actions.pack(fill="x", padx=8, pady=(0, 8))
+        tk.Button(actions, text="扫描并刷新列表", command=self._rescan_devices,
                   bg="#242a35", fg=SUB, relief="flat", bd=0,
                   font=("Microsoft YaHei UI", 9), padx=10, pady=3,
-                  cursor="hand2").pack(anchor="w", padx=8, pady=(0, 8))
+                  cursor="hand2").pack(side="left")
+        tk.Button(actions, text="恢复已删除", command=self._restore_devices,
+                  bg="#242a35", fg=SUB, relief="flat", bd=0,
+                  font=("Microsoft YaHei UI", 9), padx=10, pady=3,
+                  cursor="hand2").pack(side="left", padx=(8, 0))
         self._reload_devices()
 
         # 托盘
@@ -953,7 +959,8 @@ class SettingsWindow(tk.Toplevel):
             child.destroy()
         self.device_vars = []
         if self.demo:
-            rows = [{"key": s.key, "name": s.name, "show": True, "tray": True}
+            rows = [{"key": s.key, "name": s.name, "show": True, "tray": True,
+                     "kind": "keyboard" if s.key.startswith("36B0") else "mouse"}
                     for s in BatteryPanel._make_demo()]
         else:
             rows = dr.known_devices()
@@ -963,12 +970,23 @@ class SettingsWindow(tk.Toplevel):
             return
         for row in rows:
             frame = tk.Frame(self.dev_list, bg=BG)
-            frame.pack(fill="x", pady=2)
-            tk.Label(frame, text=row["name"], bg=BG, fg=TEXT, width=22,
-                     anchor="w", font=("Microsoft YaHei UI", 9, "bold")).pack(
-                side="left")
-            tk.Label(frame, text=row["key"], bg=BG, fg=FAINT, width=13,
-                     anchor="w", font=("Consolas", 8)).pack(side="left")
+            frame.pack(fill="x", pady=3)
+            frame.grid_columnconfigure(0, weight=1)
+            tk.Label(frame, text=row["name"], bg=BG, fg=TEXT, width=18,
+                     anchor="w", font=("Microsoft YaHei UI", 9, "bold")).grid(
+                row=0, column=0, sticky="w")
+            tk.Label(frame, text=row["key"], bg=BG, fg=FAINT, width=11,
+                     anchor="w", font=("Consolas", 8)).grid(
+                row=0, column=1, sticky="w", padx=(0, 6))
+            kind_var = tk.StringVar(value=dr.kind_label(
+                row.get("kind") or dr.infer_kind(row["key"], row["name"])))
+            combo = ttk.Combobox(frame, textvariable=kind_var, width=4,
+                                 values=("鼠标", "键盘"), state="readonly",
+                                 font=("Microsoft YaHei UI", 8))
+            combo.grid(row=0, column=2, sticky="w", padx=(0, 6))
+            combo.bind("<<ComboboxSelected>>",
+                       lambda _e, k=row["key"], v=kind_var:
+                       self._set_kind(k, v))
             show_var = tk.BooleanVar(value=row["show"])
             tray_var = tk.BooleanVar(value=row["tray"])
             self.device_vars.append((row["key"], show_var, tray_var))
@@ -977,15 +995,61 @@ class SettingsWindow(tk.Toplevel):
                            activeforeground=TEXT, bd=0, highlightthickness=0,
                            font=("Microsoft YaHei UI", 8),
                            command=lambda k=row["key"], v=show_var:
-                           self._set_flag(k, "show", v)).pack(side="left",
-                                                              padx=(6, 0))
+                           self._set_flag(k, "show", v)).grid(
+                row=0, column=3, sticky="w", padx=(0, 2))
             tk.Checkbutton(frame, text="托盘", variable=tray_var, bg=BG,
                            fg=SUB, selectcolor=BG, activebackground=BG,
                            activeforeground=TEXT, bd=0, highlightthickness=0,
                            font=("Microsoft YaHei UI", 8),
                            command=lambda k=row["key"], v=tray_var:
-                           self._set_flag(k, "tray", v)).pack(side="left",
-                                                               padx=(8, 0))
+                           self._set_flag(k, "tray", v)).grid(
+                row=0, column=4, sticky="w", padx=(0, 4))
+            tk.Button(frame, text="删除", command=lambda k=row["key"],
+                      n=row["name"]: self._delete_device(k, n),
+                      bg="#5a2328", fg="#ffb4b4", activebackground="#7a2d34",
+                      activeforeground="white", relief="flat", bd=0,
+                      font=("Microsoft YaHei UI", 8), padx=6, pady=1,
+                      cursor="hand2").grid(row=0, column=5, sticky="e")
+            theme.apply_new(frame, "panel")
+
+    def _set_kind(self, key, var):
+        kind = "keyboard" if var.get() == "键盘" else "mouse"
+        try:
+            dr.set_kind(key, kind)
+            tc.post_to_tray(tc.MSG_RELOAD)
+            if self.on_change:
+                self.on_change()
+        except Exception as exc:  # noqa: BLE001
+            messagebox.showerror("设置", str(exc), parent=self)
+
+    def _delete_device(self, key, name):
+        if not messagebox.askyesno(
+                "删除设备",
+                f"从设置列表和面板中删除「{name}」？\n\n"
+                "扫描时不会自动恢复；可点「恢复已删除」找回。",
+                parent=self):
+            return
+        try:
+            dr.delete_device(key)
+            tc.post_to_tray(tc.MSG_RELOAD)
+            self._reload_devices()
+            if self.on_change:
+                self.on_change()
+        except Exception as exc:  # noqa: BLE001
+            messagebox.showerror("设置", str(exc), parent=self)
+
+    def _restore_devices(self):
+        try:
+            count = dr.restore_deleted_devices()
+            tc.post_to_tray(tc.MSG_RELOAD)
+            self._reload_devices()
+            if self.on_change:
+                self.on_change()
+            self.boot_msg.configure(
+                text=f"已恢复 {count} 个设备" if count else "没有已删除设备",
+                fg=GREEN if count else FAINT)
+        except Exception as exc:  # noqa: BLE001
+            messagebox.showerror("设置", str(exc), parent=self)
 
     def _set_flag(self, key, field, var):
         try:
