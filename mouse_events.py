@@ -315,9 +315,11 @@ def list_test_devices() -> list[dict]:
 
     out = []
     for base, g in raw.items():
+        # ROOT#MOUSE / ROOT#KEYBOARD 是系统聚合设备，实际事件来自具体
+        # HID 句柄；选了它反而收不到事件，不放进选择列表。
         if base in ("ROOT:MOUSE", "ROOT:KEYBOARD"):
-            kind = "mouse" if base.endswith("MOUSE") else "keyboard"
-        elif base in known_kind:
+            continue
+        if base in known_kind:
             kind = known_kind[base]
         else:
             text = (g["product"] or "").lower()
@@ -354,15 +356,19 @@ def list_test_devices() -> list[dict]:
 
 def create_message_window():
     hinst = kernel32.GetModuleHandleW(None)
-    class_name = f"EweadnRawInput_{id(_WNDPROC_REF):x}"
+    class_name = f"WirelessHidRaw_{id(_WNDPROC_REF):x}"
     wc = WNDCLASSW()
     wc.lpfnWndProc = ctypes.cast(_WNDPROC_REF, ctypes.c_void_p)
     wc.hInstance = hinst
     wc.lpszClassName = class_name
     if not user32.RegisterClassW(ctypes.byref(wc)):
-        raise OSError(f"RegisterClassW 失败: {ctypes.get_last_error()}")
+        err = ctypes.get_last_error()
+        # 1410 = ERROR_CLASS_ALREADY_EXISTS。类在进程内只注册一次，
+        # 切换监听设备重启 listener 时会命中；窗口仍然可以创建。
+        if err not in (0, 1410):
+            raise OSError(f"RegisterClassW 失败: {err}")
     hwnd = user32.CreateWindowExW(
-        0, class_name, "EWEADN raw input", 0, 0, 0, 0, 0,
+        0, class_name, "Wireless HID test raw input", 0, 0, 0, 0, 0,
         wintypes.HWND(HWND_MESSAGE), None, hinst, None)
     if not hwnd:
         raise OSError(f"CreateWindowExW 失败: {ctypes.get_last_error()}")
