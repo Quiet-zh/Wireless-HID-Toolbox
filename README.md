@@ -1,7 +1,8 @@
-# EWEADN 8K 鼠标电量读取器
+# EWEADN 8K 鼠标 + PMO WAVE75 键盘电量读取器
 
 读取 **迈从 EWEADN S9 V2 Master（2.4G，VID `0x3554` / PID `0xF517`，产品名 `EWEADN 8K`）**
-鼠标电量的小工具。纯 Python 标准库 + `ctypes` 调 Windows HID，**零第三方依赖**。
+鼠标，以及 **PMO WAVE75（VID `0x36B0`，2.4G dongle `0x3002` / 有线 `0x3009`）**
+键盘的电量。纯 Python 标准库 + `ctypes` 调 Windows HID，**零第三方依赖**。
 另外附带一个 Raw Input 事件监视器，可以看这只鼠标的按键、移动和滚轮。
 
 > 协议参考 [`2.4G-battery-viewer`](../2.4G-battery-viewer) 的方法论，
@@ -22,21 +23,28 @@
 
 按 E-HUB 同款电压曲线换算后，该回包显示 **87%**（UI 优先用电压算电量）。
 
+键盘（PMO HUB 官方固件）：`AA 30` 回包 `aa 30 ... 55 42 ...`，即 **66% / 未充电**；
+2.4G dongle 与 USB 有线两种连接都验证过。
+
 ## 快速开始
 
 要求：Windows 10/11 + Python 3.10+（官方安装包自带 `tkinter`）。
 
 ```bat
-:: 读一次
+:: 鼠标读一次
 python eweadn_battery.py --once
+
+:: 键盘读一次（PMO 官方固件，有线或 2.4G）
+python keyboard_battery.py --once
 
 :: 输出 JSON
 python eweadn_battery.py --json
+python keyboard_battery.py --json
 
 :: 每 30 秒刷新
 python eweadn_battery.py --watch 30
 
-:: 打开电量面板
+:: 打开双设备电量面板
 python battery_panel.py
 ```
 
@@ -50,8 +58,9 @@ EWEADN 8K (3554:F517)  电量 87%（设备自报 90% · 4.049 V · 未充电）
 
 ## 电量面板
 
+- 两张卡片：左鼠标（EWEADN 8K）、右键盘（PMO WAVE75），同时显示
 - 大号百分比 + 进度条，颜色随电量变化（≥60 绿 / 30–59 黄 / <30 红）
-- 显示电压、充电状态、设备自报电量、更新时间
+- 鼠标卡片：电压、充电状态、设备自报电量；键盘卡片：连接方式、充电状态、协议
 - 自动刷新（30 秒 / 60 秒 / 2 分钟 / 5 分钟），可手动刷新
 - 读取在后台线程，界面不卡；关闭窗口即退出，无残留进程
 
@@ -189,15 +198,14 @@ python keyboard_battery.py --watch 30
 协议与 PMO HUB 2.1.1 / Linux `hid-rdmctmzt` 驱动一致：`AA 10` 开会话、
 `AA 30` 读电量、`AA 11` 结束；回复第 8 字节是电量、第 9 字节是充电状态。
 
-**两个前提：**
+**前提：PMO HUB 官方固件（键盘 + 接收器都要升级）。**
 
-1. **USB 有线模式**（PID `0x3009`）。2.4G dongle（PID `0x3002`）只转发键鼠 HID，
-   不转发厂商命令——官方 PMO 驱动和 VIA 在 2.4G 下也连不上键盘。
-2. **PMO HUB 官方固件**。QMK/VIA 固件虽然能用 usevia.app 改键，但固件里没有
-   主机侧电量命令（VIA `get_keyboard_value` id 5 返回 `0xFF`，custom 通道 2/3
-   只是灯效），只能用 `Fn+Backspace` 看数字键灯。
-
-当前如果检测到 QMK/VIA 固件，`keyboard_battery.py` 会直接说明原因，不会误报 100%。
+- 官方固件下 **2.4G dongle 会转发厂商命令**：实测 `AA 10` / `AA 30` 返回
+  `status=0x55`，读到 63–66%，有线模式同样可用。
+- QMK/VIA 固件不行：VIA 可以用 usevia.app 改键，但固件里没有主机侧电量命令
+  （`get_keyboard_value` id 5 返回 `0xFF`，custom 通道 2/3 只是灯效），
+  只能用 `Fn+Backspace` 看数字键灯。
+- 当前如果检测到 QMK/VIA 固件，`keyboard_battery.py` 会直接说明原因，不会误报 100%。
 
 ## 目录结构
 
@@ -205,7 +213,7 @@ python keyboard_battery.py --watch 30
 |---|---|
 | `eweadn_proto.py` | 协议常量、校验和、报文构造 / 解析、设备发现、`read_battery()` |
 | `eweadn_battery.py` | 命令行入口（`--once` / `--json` / `--watch` / `--debug`） |
-| `battery_panel.py` | Tkinter 电量面板 |
+| `battery_panel.py` | Tkinter 双设备电量面板（鼠标 + 键盘） |
 | `debug_tool.py` | 枚举 / 监听 / 发原始命令 / 唤醒检查 |
 | `mouse_events.py` | Raw Input 事件监控（按键 / 移动 / 滚轮 / 键盘） |
 | `mouse_test_gui.py` | 可视化鼠标测试面板（测试区域 / 按键指示 / 坐标 / 点击统计） |
@@ -234,9 +242,11 @@ chunk）里保留了完整的「匠盟」协议实现：16 字节报文、命令
 
 ## 限制
 
-- 只支持 `3554:F517`（以及同协议的 EWEADN 8K 系列；其它 VID/PID 需要自行改常量）。
+- 鼠标只支持 `3554:F517`（以及同协议的 EWEADN 8K 系列；其它 VID/PID 需要自行改常量）。
+- 键盘只支持 `36B0:3002`（2.4G dongle）/ `36B0:3009`（USB 有线），且必须是
+  PMO HUB 官方固件；QMK/VIA 固件没有主机侧电量命令。
 - 只支持 Windows（依赖 `setupapi` / `hid` / `kernel32`）。
-- 接收器必须插在 USB 口上；鼠标需开机并与接收器配对。
+- 接收器必须插在 USB 口上；鼠标/键盘需开机并与接收器配对。
 - 不做设置写入、不改 DPI / 灯效 / 按键，只读取电量与在线状态。
 
 ## 致谢

@@ -3,7 +3,10 @@
 
 设备：VID 0x36B0，2.4G dongle PID 0x3002（WAVE75 有线模式 PID 0x3009）。
 接口：HID usage page 0xFF60 / usage 0x61（raw HID，无 Report ID 编号，
-      dongle 32 字节、有线 64 字节）。
+      本机 WAVE75 两种模式都是 32 字节负载 / 33 字节报文）。
+
+前提：键盘必须是 **PMO HUB 官方固件**。QMK/VIA 固件会以 0xFF 拒绝这些命令，
+      主机侧拿不到电量（只能 Fn+Backspace 看灯）。
 
 协议（RDR / RDMCTMZT，PMO HUB 2.1.1 与 Linux hid-rdmctmzt 驱动一致）：
 
@@ -167,8 +170,8 @@ def read_battery(interface=None, timeout: float = 1.2,
             if not start:
                 if iface.pid == PID_DONGLE:
                     raise PmoError(
-                        "2.4G dongle 不转发厂商 HID 命令（官方驱动和 VIA 在 2.4G 下也连不上），"
-                        "请用 USB 线连接键盘后再读电量。"
+                        "2.4G dongle 没有响应：键盘可能休眠/未连接，或仍是 QMK 固件。\n"
+                        "请按一下键盘；QMK/VIA 固件没有主机侧电量命令，需要刷 PMO HUB 官方固件。"
                     )
                 raise PmoError("键盘没有响应（可能休眠或接口被占用），请按一下键盘后重试。")
             if start[7] != STATUS_OK:

@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""keyboard_battery.py —— 读取 PMO WAVE75 键盘电量（USB 有线模式）。
+"""keyboard_battery.py —— 读取 PMO WAVE75 键盘电量（有线 / 2.4G）。
 
     python keyboard_battery.py --once
     python keyboard_battery.py --json
@@ -7,9 +7,9 @@
     python keyboard_battery.py --debug
 
 注意：
-  * 2.4G dongle（PID 0x3002）不转发厂商 HID，读不到电量，请插 USB 线。
-  * 键盘必须是 PMO HUB 官方固件；QMK/VIA 固件没有主机侧电量命令，
-    只能用 Fn+Backspace 看数字键灯。
+  * 键盘必须是 PMO HUB 官方固件（键盘 + 接收器都升级）。
+  * QMK/VIA 固件没有主机侧电量命令，只能用 Fn+Backspace 看数字键灯。
+  * 2.4G 模式下 dongle 负责转发；官方固件实测可读。
 """
 from __future__ import annotations
 
