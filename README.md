@@ -31,29 +31,38 @@
 要求：Windows 10/11 + Python 3.10+（官方安装包自带 `tkinter`）。
 
 ```bat
-:: 鼠标读一次
-python eweadn_battery.py --once
+:: 两台设备一次读（验收标准 1）
+python my_devices.py --once
 
-:: 键盘读一次（PMO 官方固件，有线或 2.4G）
+:: 鼠标 / 键盘分别读
+python eweadn_battery.py --once
 python keyboard_battery.py --once
 
 :: 输出 JSON
-python eweadn_battery.py --json
-python keyboard_battery.py --json
+python my_devices.py --json
 
 :: 每 30 秒刷新
-python eweadn_battery.py --watch 30
+python my_devices.py --watch 30
 
 :: 打开双设备电量面板
 python battery_panel.py
+
+:: 托盘常驻（两个数字图标）
+python tray_app.py
+python tray_app.py --status
+python tray_app.py --quit
+
+:: 完整调试版
+python app.py
 ```
 
 也可以直接双击 `启动面板.cmd`（无控制台窗口）或 `读取电量.cmd`。
 
 命令行输出示例：
 
-```
-EWEADN 8K (3554:F517)  电量 87%（设备自报 90% · 4.049 V · 未充电）
+```text
+EWEADN 8K: 电量 85%（4.040 V，未充电）
+PMO WAVE75: 电量 61%（未充电，2.4G）
 ```
 
 ## 电量面板
@@ -64,7 +73,55 @@ EWEADN 8K (3554:F517)  电量 87%（设备自报 90% · 4.049 V · 未充电）
 - 自动刷新（30 秒 / 60 秒 / 2 分钟 / 5 分钟），可手动刷新
 - 读取在后台线程，界面不卡；关闭窗口即退出，无残留进程
 
-## 调试工具
+## 托盘常驻
+
+```bat
+python tray_app.py              :: 静默驻留（开机自启跑的就是它）
+python tray_app.py --debug      :: 前台运行并打印过程
+python tray_app.py --status     :: 查看配置 / 自启 / 是否在运行
+python tray_app.py --quit       :: 让正在运行的托盘退出
+```
+
+- 通知区域两个图标：**EWEADN 8K**、**PMO WAVE75**，图标里就是电量数字
+- 颜色：绿 ≥60 / 黄 30–59 / 红 <30；灰色是没读到
+- 左键图标 → 立刻刷新一次
+- 右键图标 → 打开/前置电量面板（已开则不重复开）
+- 悬停 tooltip：`设备名：电量%（HH:MM:SS 更新）`
+- 低 CPU：`SetTimer` 驱动，默认 60 秒；读取在后台线程
+- 退出：面板里的「退出托盘」，或 `python tray_app.py --quit`；
+  `WM_DESTROY` 里 `PostQuitMessage`，不留僵尸进程
+
+## 完整调试版
+
+```bat
+python app.py
+```
+
+![调试台](docs/debug.png)
+
+- 列出本机所有 HID 接口：产品名、VID:PID、usage、Input/Output/Feature 长度、设备路径
+- 选中接口后可读 / 写 **Feature Report**、发 **Output Report**
+- **监听 Input Report**（后台线程，不卡界面）
+- **探测 Feature Report ID 0..15**
+- **手动标定**：Report ID + 字节下标 + 倍率 + 偏移；抓一帧 Input 算出百分比，
+  保存 / 加载 `calibration.json`
+- 日志只显示在窗口里，不写文件
+
+## 开机自启 / 桌面链接
+
+面板底部：
+
+- **开机自启** 勾选框：在「启动」文件夹创建 `电量托盘.lnk`，
+  目标是 `pythonw.exe tray_app.py`，不弹黑窗。任务管理器 →「启动」里能看到
+  「电量托盘」并启用/禁用；面板勾选状态读的是真实状态，不会自动改用户设置。
+- **桌面链接** 按钮：在桌面创建指向项目目录的 **目录符号链接/junction**，
+  以及指向 `启动面板.cmd` 的 **文件符号链接/硬链接**，不复制文件。
+- **退出托盘**：通知托盘退出。
+
+> 本会话里已创建：启动项 `电量托盘.lnk`（已启用）、桌面 `外设电量`（symlink）、
+> 桌面 `启动面板.cmd`（symlink）。
+
+## 命令行调试工具（debug_tool.py）
 
 ```bat
 python debug_tool.py list          :: 列出本机 EWEADN 的所有 HID 接口
@@ -212,8 +269,13 @@ python keyboard_battery.py --watch 30
 | 文件 | 说明 |
 |---|---|
 | `eweadn_proto.py` | 协议常量、校验和、报文构造 / 解析、设备发现、`read_battery()` |
-| `eweadn_battery.py` | 命令行入口（`--once` / `--json` / `--watch` / `--debug`） |
-| `battery_panel.py` | Tkinter 双设备电量面板（鼠标 + 键盘） |
+| `eweadn_battery.py` | 鼠标命令行入口（`--once` / `--json` / `--watch` / `--debug`） |
+| `my_devices.py` | 两台设备统一入口（验收标准 1 的 `--once` 两行输出） |
+| `battery_panel.py` | Tkinter 双设备电量面板（鼠标 + 键盘 / 自启 / 桌面链接 / 退出托盘） |
+| `tray_app.py` | 托盘常驻（两个数字图标 + SetTimer + 单实例） |
+| `tray_common.py` | 托盘配置、开机自启、桌面链接、IPC、僵尸清理 |
+| `win_icon.py` / `win_link.py` / `win_shell.py` | 纯 ctypes 图标 / 软连接 / .lnk |
+| `app.py` | 完整调试版（Feature/Output/Input、探测 Report ID、手动标定） |
 | `debug_tool.py` | 枚举 / 监听 / 发原始命令 / 唤醒检查 |
 | `mouse_events.py` | Raw Input 事件监控（按键 / 移动 / 滚轮 / 键盘） |
 | `mouse_test_gui.py` | 可视化鼠标测试面板（测试区域 / 按键指示 / 坐标 / 点击统计） |
@@ -231,6 +293,27 @@ python -m unittest discover -s tests -v
 8 个用例覆盖：真机抓包帧的校验和、报文归一化、电量解析、电压曲线、单调性；
 另外 5 个用例覆盖 Raw Input 的移动 / 按键 / 滚轮 / 键盘事件解析；
 再加 4 个用例覆盖 PMO 键盘报文构造与电量数据，共 17 个。
+
+## 验收自检（本机实测）
+
+| 验收项 | 结果 |
+|---|---|
+| `python my_devices.py --once` | 两行：鼠标 85% / 键盘 61%（2.4G） |
+| 面板两张卡片 + 颜色 | 绿（≥60），鼠标/键盘均正常 |
+| 任务管理器启动项 | 启动文件夹 `电量托盘.lnk`，`autostart_status()` 显示「已启用」 |
+| 桌面入口 | `外设电量` 目录 **symlink** + `启动面板.cmd` **symlink**（非复制） |
+| 无日志文件 | 只有 `tray_config.json` 配置和运行期 `tray_pid.txt`（退出删除） |
+| 托盘连续启停 3 次 | 3 次均成功，最后 `pythonw` 进程数 = 0 |
+| 空闲 CPU | 10 秒内 `0.000` 秒（SetTimer 60 秒） |
+
+复验命令：
+
+```bat
+python my_devices.py --once
+python tray_app.py --status
+python tray_app.py --quit
+python -c "import tray_common as tc; print(tc.autostart_status()); print(tc.desktop_link_status())"
+```
 
 ## 逆向过程（简述）
 

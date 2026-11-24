@@ -15,6 +15,7 @@ from tkinter import ttk
 
 import eweadn_proto as mouse_proto
 import pmo_proto as kb_proto
+import tray_common as tc
 
 BG = "#0f1115"
 CARD = "#171a21"
@@ -37,6 +38,13 @@ def level_color(percent: int) -> str:
     if percent >= 30:
         return AMBER
     return RED
+
+
+def interval_label(seconds: int) -> str:
+    for label, value in INTERVALS.items():
+        if value == seconds:
+            return label
+    return "60 秒"
 
 
 class DeviceCard(tk.Frame):
@@ -116,7 +124,12 @@ class BatteryPanel(tk.Tk):
         self._closing = False
         self._after_id = None
         self._queue: queue.Queue = queue.Queue()
+        self._ui_queue: queue.Queue = queue.Queue()
         self._demo_percent = 47
+        self._tray_checked = False
+        cfg = tc.load_config()
+        self._initial_interval = int(cfg.get("interval", 60) or 60)
+        self.autostart_var = tk.BooleanVar(value=tc.is_autostart_enabled())
 
         self.title("外设电量")
         self.configure(bg=BG)
@@ -129,6 +142,8 @@ class BatteryPanel(tk.Tk):
         self.protocol("WM_DELETE_WINDOW", self._on_close)
         self.after(100, self._pump)
         self.after(200, self.refresh)
+        if not demo:
+            self.after(500, self._ensure_tray)
 
     def _center(self):
         self.update_idletasks()
@@ -191,12 +206,30 @@ class BatteryPanel(tk.Tk):
             font=("Microsoft YaHei UI", 9), bd=0, highlightthickness=0,
             command=self._schedule_next).pack(side="left", padx=(14, 6))
 
-        self.interval_var = tk.StringVar(value="60 秒")
+        self.interval_var = tk.StringVar(value=interval_label(self._initial_interval))
         combo = ttk.Combobox(controls, textvariable=self.interval_var,
                              values=list(INTERVALS), state="readonly", width=7,
                              font=("Microsoft YaHei UI", 9))
         combo.pack(side="left")
-        combo.bind("<<ComboboxSelected>>", lambda _e: self._schedule_next())
+        combo.bind("<<ComboboxSelected>>", lambda _e: self._on_interval_changed())
+
+        tk.Checkbutton(
+            controls, text="开机自启", variable=self.autostart_var, bg=BG, fg=SUB,
+            selectcolor=BG, activebackground=BG, activeforeground=TEXT,
+            font=("Microsoft YaHei UI", 9), bd=0, highlightthickness=0,
+            command=self._toggle_autostart).pack(side="left", padx=(14, 8))
+
+        tk.Button(controls, text="桌面链接", command=self._desktop_links,
+                  bg="#242a35", fg=SUB, activebackground="#2d3543",
+                  activeforeground=TEXT, relief="flat", bd=0,
+                  font=("Microsoft YaHei UI", 9), padx=10, pady=3,
+                  cursor="hand2").pack(side="left", padx=(0, 6))
+
+        tk.Button(controls, text="退出托盘", command=self._quit_tray,
+                  bg="#242a35", fg=SUB, activebackground="#2d3543",
+                  activeforeground=TEXT, relief="flat", bd=0,
+                  font=("Microsoft YaHei UI", 9), padx=10, pady=3,
+                  cursor="hand2").pack(side="left")
 
         self.status_dot = tk.Label(controls, text="●", bg=BG, fg=FAINT,
                                    font=("Microsoft YaHei UI", 9))
@@ -252,6 +285,14 @@ class BatteryPanel(tk.Tk):
                 self._apply(result)
         except queue.Empty:
             pass
+        try:
+            while True:
+                kind, payload = self._ui_queue.get_nowait()
+                if kind == "status":
+                    self.status_label.configure(text=payload, fg=FAINT)
+                    self.status_dot.configure(fg=GREEN if "已" in payload else RED)
+        except queue.Empty:
+            pass
         self.after(100, self._pump)
 
     def _apply(self, result):
@@ -301,6 +342,53 @@ class BatteryPanel(tk.Tk):
             self.status_dot.configure(fg=RED)
             self.status_label.configure(text="设备暂时没有响应", fg=RED)
         self._schedule_next()
+
+    def _ensure_tray(self):
+        if self._tray_checked:
+            return
+        self._tray_checked = True
+        if tc.is_tray_running():
+            self._ui_queue.put(("status", "托盘已在运行"))
+            return
+
+        def worker():
+            ok = tc.start_tray_app()
+            self._ui_queue.put(("status", "托盘已启动" if ok else "托盘启动失败"))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _on_interval_changed(self):
+        seconds = INTERVALS.get(self.interval_var.get(), 60)
+        cfg = tc.load_config()
+        cfg["interval"] = seconds
+        tc.save_config(cfg)
+        tc.post_to_tray(tc.MSG_RELOAD)
+        self._schedule_next()
+
+    def _toggle_autostart(self):
+        try:
+            tc.set_autostart(bool(self.autostart_var.get()))
+        except Exception as exc:  # noqa: BLE001
+            self.status_label.configure(text=f"开机自启设置失败：{exc}", fg=RED)
+        actual = tc.is_autostart_enabled()
+        self.autostart_var.set(actual)
+        self.status_label.configure(
+            text="开机自启已开启" if actual else "开机自启已关闭",
+            fg=GREEN if actual else FAINT)
+
+    def _desktop_links(self):
+        result = tc.install_desktop_links()
+        errors = result.get("errors") or []
+        if errors:
+            self.status_label.configure(text=f"桌面链接：{errors[0]}", fg=RED)
+        else:
+            self.status_label.configure(text="桌面链接已创建（目录 + 启动脚本）", fg=GREEN)
+
+    def _quit_tray(self):
+        ok = tc.post_to_tray(tc.MSG_QUIT)
+        self.status_label.configure(
+            text="已通知托盘退出" if ok else "托盘没在运行",
+            fg=FAINT if ok else RED)
 
     def _schedule_next(self):
         if self._after_id is not None:

@@ -3,3 +3,6 @@ __pycache__/
 .venv/
 venv/
 *.log
+tray_config.json
+tray_pid.txt
+calibration.json
