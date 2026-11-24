@@ -11,7 +11,15 @@ Windows 10/11 的 2.4G 无线外设电量与 HID 调试工具箱。纯 Python �
 - **测试**：鼠标键盘测试，多设备切换监听、按键/移动/滚轮/坐标/点击统计
 - **调试**：完整 HID 调试台（Feature / Output / Input / 探 ID / 手动标定）
 - **系统集成**：开机自启、桌面入口、上次电量缓存
-- **打包**：`main.py` 统一入口，可直接用 PyInstaller 打包成 exe
+- **打包**：`main.py` 统一入口，onefile / onedir 可选
+
+## 文档导航
+
+- [更新记录](CHANGELOG.md)
+- [打包说明](docs/PACKAGING.md)：onefile 默认、onedir 选择、产物与排错
+- [主题说明](docs/THEME.md)：白天/黑夜配色与新增颜色约定
+- [测试说明](docs/TESTING.md)：自动化覆盖、GUI 手动验收清单
+- [设备配置](docs/DEVICE_CONFIG.md)：设备类型、删除/恢复、配置字段
 
 ![黑夜主题](docs/panel.png)
 
@@ -101,6 +109,8 @@ onedir:  dist\WirelessHIDToolbox\WirelessHIDToolbox.exe
   `version_info.txt` 版本资源；
 - PyInstaller 只用于打包，运行程序本身仍然零第三方依赖。
 
+更完整的模式选择、产物与常见问题见 [docs/PACKAGING.md](docs/PACKAGING.md)。
+
 ## 主界面
 
 - 卡片按设备动态生成，不再写死；右上角 **⚙ 设置** 逐设备选择
@@ -108,6 +118,7 @@ onedir:  dist\WirelessHIDToolbox\WirelessHIDToolbox.exe
 - 大号百分比 + 进度条；休眠时显示灰色上次电量 + 上次更新时间
 - 底部：**立即刷新 / 自动刷新 / 常驻托盘**
 - 右上角：**☀ 白天 / 🌙 黑夜** 主题切换，配置持久化；已打开的工具窗口自动跟随
+  （实现与配色约定见 [docs/THEME.md](docs/THEME.md)）
 - ⚙ 设置 → **标题栏按钮**：
   - 最小化（-）：最小化到托盘 / 正常收起窗口（任务栏仍保留应用图标）
   - 关闭（×）：仅关闭主界面 / 关闭所有可见窗口 / 完全退出应用（含托盘）
@@ -128,6 +139,8 @@ onedir:  dist\WirelessHIDToolbox\WirelessHIDToolbox.exe
 - 开机自启、创建桌面链接
 - 刷新间隔：30 秒–30 分钟
 - 工具：扫描全部、协议表、鼠标键盘测试、HID 调试台、项目目录、配置目录
+
+设备类型、删除/恢复与配置字段见 [docs/DEVICE_CONFIG.md](docs/DEVICE_CONFIG.md)。
 
 ## 托盘常驻
 
@@ -253,14 +266,19 @@ python tray_app.py --quit
 python -m unittest discover -s tests -v
 ```
 
-共 38 个用例：
+共 **50** 个用例：
 
 - 8 个鼠标协议/电压曲线
 - 5 个 Raw Input 事件解析
 - 4 个 PMO 键盘
 - 12 个多厂商协议帧/校验/解析
-- 6 个设备目录/快照字段/类型
+- 7 个设备目录/类型/删除恢复
 - 3 个 104 键布局数据
+- 4 个配置默认值/合并/主题回退
+- 4 个主题配色映射
+- 3 个版本号/Windows 版本资源/打包模式
+
+详细覆盖矩阵与 GUI 手动验收清单见 [docs/TESTING.md](docs/TESTING.md)。
 
 ## 验收自检（本机实测）
 
