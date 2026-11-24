@@ -19,6 +19,7 @@ from tkinter import messagebox, ttk
 
 import device_registry as dr
 import generic_protocols as gp
+import theme
 import tray_common as tc
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -45,6 +46,13 @@ def level_color(percent: int) -> str:
     if percent >= 30:
         return AMBER
     return RED
+
+
+def themed(color: str) -> str:
+    """把深色常量映射成当前主题下的颜色。"""
+    if theme.current() == "light":
+        return theme.PANEL_LIGHT.get(color.lower(), color)
+    return color
 
 
 def interval_label(seconds: int) -> str:
@@ -124,31 +132,33 @@ class DeviceCard(tk.Frame):
             text=f"{snap.key} · {snap.source or '等待设备'}")
         if snap.present:
             if snap.charging is True:
-                state, color = "充电中", GREEN
+                state, color = "充电中", themed(GREEN)
             elif snap.status == "full":
-                state, color = "已充满", GREEN
+                state, color = "已充满", themed(GREEN)
             elif snap.status == "wired":
-                state, color = "有线连接", GREEN
+                state, color = "有线连接", themed(GREEN)
             else:
-                state, color = "已连接", FAINT
+                state, color = "已连接", themed(FAINT)
         elif snap.stale:
             stamp = time.strftime("%H:%M", time.localtime(snap.updated))
-            state, color = f"休眠 · 上次更新 {stamp}", AMBER
+            state, color = f"休眠 · 上次更新 {stamp}", themed(AMBER)
         else:
-            state, color = "未连接", RED if snap.show else FAINT
+            state, color = "未连接", themed(RED if snap.show else FAINT)
         self.status_label.configure(text=state, fg=color)
 
         pct = snap.percent
         if pct is None:
-            self.percent_label.configure(text="--", fg=MUTED)
+            self.percent_label.configure(text="--", fg=themed(MUTED))
             self.bar.coords(self.bar_fill, 0, 0, 0, 12)
-            self.bar.itemconfigure(self.bar_fill, fill=TRACK)
+            self.bar.itemconfigure(self.bar_fill, fill=themed(TRACK))
         else:
-            color = MUTED if (snap.stale or not snap.present) else level_color(pct)
+            color = themed(MUTED) if (snap.stale or not snap.present) \
+                else themed(level_color(pct))
             self.percent_label.configure(text=f"{pct}%", fg=color)
             self.bar.coords(self.bar_fill, 0, 0, max(1, 250 * pct / 100), 12)
             self.bar.itemconfigure(self.bar_fill,
-                                   fill=color if not snap.stale else "#5d6675")
+                                   fill=color if not snap.stale
+                                   else themed("#5d6675"))
         self.hint.configure(
             text=("缓存值 · 设备唤醒后自动更新" if snap.stale else
                   "只读查询 · 不修改设备设置" if snap.present else
@@ -192,6 +202,7 @@ class BatteryPanel(tk.Tk):
 
         self.auto_var = tk.BooleanVar(value=True)
         self._build_ui()
+        theme.setup(self, "panel")
         user32 = ctypes.windll.user32
         user32.GetAncestor.restype = ctypes.c_void_p
         user32.GetAncestor.argtypes = [ctypes.c_void_p, ctypes.c_uint]
@@ -228,6 +239,13 @@ class BatteryPanel(tk.Tk):
                   activeforeground=TEXT, relief="flat", bd=0,
                   font=("Microsoft YaHei UI", 9), padx=12, pady=4,
                   cursor="hand2").pack(side="right")
+        self.theme_btn = tk.Button(
+            head, text=self._theme_button_text(), command=self._toggle_theme,
+            bg="#242a35", fg=SUB, activebackground="#2d3543",
+            activeforeground=TEXT, relief="flat", bd=0,
+            font=("Microsoft YaHei UI", 9), padx=10, pady=4,
+            cursor="hand2")
+        self.theme_btn.pack(side="right", padx=(0, 8))
 
         wrap = tk.Frame(self, bg=BG)
         wrap.pack(fill="both", expand=True, padx=14, pady=(4, 0))
@@ -415,6 +433,7 @@ class BatteryPanel(tk.Tk):
             if card is None:
                 card = DeviceCard(self.inner, snap)
                 self.cards[snap.key] = card
+                theme.apply_new(card, "panel")
             card.update_reading(snap)
             card.grid_configure(row=i // 2, column=i % 2, padx=6, pady=6,
                                 sticky="nsew")
@@ -539,6 +558,22 @@ class BatteryPanel(tk.Tk):
             self._exit_app(ask=False)
             return
         self._poll_id = self._later(300, self._poll_show)
+
+    def _theme_button_text(self) -> str:
+        return "☀ 白天" if theme.current() == "dark" else "🌙 黑夜"
+
+    def _toggle_theme(self):
+        target = "light" if theme.current() == "dark" else "dark"
+        cfg = tc.load_config()
+        cfg["theme"] = target
+        tc.save_config(cfg)
+        theme.apply_theme(self, target, "panel")
+        if hasattr(self, "status_label"):
+            self.status_label.configure(
+                text="已切换白天主题" if target == "light" else "已切换黑夜主题",
+                fg=("#4b5563" if target == "light" else SUB))
+        if hasattr(self, "theme_btn"):
+            self.theme_btn.configure(text=self._theme_button_text())
 
     # ------------------------------------------------------------- 设置
     def _open_settings(self):
@@ -734,6 +769,7 @@ class SettingsWindow(tk.Toplevel):
         self._timer_id = None
         self.protocol("WM_DELETE_WINDOW", self._on_window_close)
         self._build()
+        theme.apply_new(self, "panel")
 
     def destroy(self):
         if self._timer_id is not None:
@@ -1035,6 +1071,7 @@ class SettingsWindow(tk.Toplevel):
                     or "任意")
             text.insert("end", f"{s.vid:04X}:{pids}  {s.name}  [{s.kind}]\n")
         text.configure(state="disabled")
+        theme.apply_new(win, "panel")
 
     def _launch(self, script):
         try:

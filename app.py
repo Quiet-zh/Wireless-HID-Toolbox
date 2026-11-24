@@ -22,6 +22,7 @@ import tkinter as tk
 from tkinter import ttk
 
 import hid_win as hw
+import theme
 import window_behavior as wb
 from version import __version__
 
@@ -60,6 +61,7 @@ class DebugApp(tk.Tk):
         self.cal_offset = tk.StringVar(value="0")
 
         self._build_ui()
+        theme.setup(self, "tool", on_change=self._theme_changed)
         self.after(100, self._pump)
         self.after(200, self.refresh_devices)
 
@@ -232,6 +234,7 @@ class DebugApp(tk.Tk):
             self._log(f"枚举失败：{exc}")
             return
         self.items = items
+        self._apply_tree_theme()
         self.tree.delete(*self.tree.get_children())
         for i, it in enumerate(items):
             self.tree.insert("", "end", iid=str(i), values=(
@@ -239,7 +242,7 @@ class DebugApp(tk.Tk):
                 f"{it.vid:04X}:{it.pid:04X}",
                 f"0x{it.usage_page:04X}:0x{it.usage:04X}",
                 f"{it.input_len}/{it.output_len}/{it.feature_len}",
-                it.path))
+                it.path), tags=("row",))
         self.count_label.configure(text=f"{len(items)} 个接口")
         self._log(f"枚举完成：{len(items)} 个 HID 接口")
 
@@ -473,6 +476,33 @@ class DebugApp(tk.Tk):
             pass
         self.after(100, self._pump)
 
+
+    def _apply_tree_theme(self):
+        dark = theme.current() == "dark"
+        bg = "#171a21" if dark else "#ffffff"
+        fg = "#f5f7fa" if dark else "#1f2333"
+        try:
+            style = ttk.Style(self)
+            style.configure("App.Treeview", background=bg, fieldbackground=bg,
+                            foreground=fg, bordercolor="#2a303c" if dark
+                            else "#e7e9f0", rowheight=24,
+                            font=("Microsoft YaHei UI", 9))
+            style.configure("App.Treeview.Heading",
+                            background="#0f1115" if dark else "#f4f5f8",
+                            foreground="#a3aab8" if dark else "#6b7280",
+                            font=("Microsoft YaHei UI", 9, "bold"))
+            style.map("App.Treeview",
+                      background=[("selected", "#635bff")],
+                      foreground=[("selected", "#ffffff")])
+            self.tree.configure(style="App.Treeview",
+                                background=bg, fieldbackground=bg,
+                                foreground=fg)
+            self.tree.tag_configure("row", background=bg, foreground=fg)
+        except tk.TclError:
+            pass
+
+    def _theme_changed(self):
+        self._apply_tree_theme()
 
     def _on_close(self):
         wb.handle_close(self)

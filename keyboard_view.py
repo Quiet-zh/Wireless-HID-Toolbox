@@ -7,6 +7,8 @@ from __future__ import annotations
 
 import tkinter as tk
 
+import theme
+
 BG = "#f7f8fc"
 KEY = "#ffffff"
 KEY_EDGE = "#d9deec"
@@ -126,9 +128,23 @@ class KeyboardView(tk.Canvas):
         for vk in self._items:
             self._paint(vk)
 
+    def _colors(self):
+        if theme.current() == "dark":
+            return {
+                "key": "#171a21", "edge": "#2a303c", "text": "#a3aab8",
+                "lock": "#2b2a55", "lock_edge": "#635bff",
+                "lock_text": "#c7c3ff",
+            }
+        return {
+            "key": KEY, "edge": KEY_EDGE, "text": KEY_TEXT,
+            "lock": ACCENT_SOFT, "lock_edge": ACCENT,
+            "lock_text": ACCENT_DARK,
+        }
+
     def redraw(self) -> None:
         self.delete("all")
         self._items.clear()
+        colors = self._colors()
         w = max(self.winfo_width(), 640)
         h = max(self.winfo_height(), 240)
         unit = min((w - 22) / 23.5, (h - 18) / 6.0)
@@ -142,10 +158,11 @@ class KeyboardView(tk.Canvas):
             y1 = oy + y * unit + gap / 2
             x2 = ox + (x + kw) * unit - gap / 2
             y2 = oy + (y + kh) * unit - gap / 2
-            rect = self.create_rectangle(x1, y1, x2, y2, fill=KEY,
-                                         outline=KEY_EDGE, width=1)
+            rect = self.create_rectangle(x1, y1, x2, y2,
+                                         fill=colors["key"],
+                                         outline=colors["edge"], width=1)
             text = self.create_text((x1 + x2) / 2, (y1 + y2) / 2,
-                                    text=label, fill=KEY_TEXT, font=font)
+                                    text=label, fill=colors["text"], font=font)
             self._items.setdefault(vk, []).extend([rect, text])
         for vk in set(self._items):
             self._paint(vk)
@@ -154,12 +171,14 @@ class KeyboardView(tk.Canvas):
         items = self._items.get(vk)
         if not items:
             return
+        colors = self._colors()
         if vk in self._pressed:
             fill, outline, fg = ACCENT, ACCENT_DARK, "#ffffff"
         elif vk in self._locks:
-            fill, outline, fg = ACCENT_SOFT, ACCENT, ACCENT_DARK
+            fill, outline = colors["lock"], colors["lock_edge"]
+            fg = colors["lock_text"]
         else:
-            fill, outline, fg = KEY, KEY_EDGE, KEY_TEXT
+            fill, outline, fg = colors["key"], colors["edge"], colors["text"]
         for i, item in enumerate(items):
             if i % 2 == 0:
                 self.itemconfigure(item, fill=fill, outline=outline)

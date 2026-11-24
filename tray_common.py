@@ -52,6 +52,7 @@ UI_TITLE = f"外设电量 v{__version__}"
 DEFAULT_CONFIG = {
     "interval": 60,        # 托盘轮询间隔（秒）
     "autostart": True,     # 开机自启
+    "theme": "dark",       # dark / light
     "devices": {},         # VID:PID -> {name, show, tray, order}
     "window": {            # 主界面标题栏按钮行为
         "minimize": "tray",    # tray / taskbar
