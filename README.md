@@ -1,6 +1,6 @@
 # Wireless HID Toolbox（2.4G 外设工具箱）
 
-当前版本：**v1.0.1**（更新记录见 [CHANGELOG.md](CHANGELOG.md)）
+当前版本：**v1.1.0**（更新记录见 [CHANGELOG.md](CHANGELOG.md)）
 
 Windows 10/11 的 2.4G 无线外设电量与 HID 调试工具箱。纯 Python 标准库 +
 `ctypes` + `tkinter`，运行时不依赖任何第三方库。
@@ -13,7 +13,9 @@ Windows 10/11 的 2.4G 无线外设电量与 HID 调试工具箱。纯 Python �
 - **系统集成**：开机自启、桌面入口、上次电量缓存
 - **打包**：`main.py` 统一入口，可直接用 PyInstaller 打包成 exe
 
-![主界面](docs/panel.png)
+![黑夜主题](docs/panel.png)
+
+![白天主题](docs/light_panel.png)
 
 ![设置](docs/settings.png)
 
@@ -96,6 +98,7 @@ dist\WirelessHIDToolbox\WirelessHIDToolbox.exe
 - 所有卡片统一字段：**连接 / 充电 / 电压 / 数据源**
 - 大号百分比 + 进度条；休眠时显示灰色上次电量 + 上次更新时间
 - 底部：**立即刷新 / 自动刷新 / 常驻托盘**
+- 右上角：**☀ 白天 / 🌙 黑夜** 主题切换，配置持久化；已打开的工具窗口自动跟随
 - ⚙ 设置 → **标题栏按钮**：
   - 最小化（-）：最小化到托盘 / 正常收起窗口（任务栏仍保留应用图标）
   - 关闭（×）：仅关闭主界面 / 关闭所有可见窗口 / 完全退出应用（含托盘）

@@ -19,6 +19,7 @@ from collections import deque
 from tkinter import messagebox, ttk
 
 import mouse_events as me
+import theme
 import window_behavior as wb
 from keyboard_view import KeyboardView
 from version import __version__
@@ -126,6 +127,7 @@ class MouseTestApp(tk.Tk):
         self._build_mouse_page()
         self._build_keyboard_page()
         self._show_tab("mouse")
+        theme.setup(self, "tool", on_change=self._theme_changed)
 
         self.protocol("WM_DELETE_WINDOW", self._on_close)
         if not demo:
@@ -450,12 +452,17 @@ class MouseTestApp(tk.Tk):
             c.itemconfigure(tile["label"], fill="white")
             c.itemconfigure(tile["count"], fill="white")
         else:
-            c.itemconfigure(tile["bg"], fill="#f1f3f9", outline=BORDER)
-            c.itemconfigure(tile["icon"][0], fill="#9aa2b6")
-            c.itemconfigure(tile["icon"][1], fill="#f1f3f9")
-            c.itemconfigure(tile["icon"][2], fill="#f1f3f9")
-            c.itemconfigure(tile["label"], fill="#6b7280")
-            c.itemconfigure(tile["count"], fill="#9aa2b6")
+            dark = theme.current() == "dark"
+            tile_bg = "#232936" if dark else "#f1f3f9"
+            icon_fg = "#7e879c" if dark else "#9aa2b6"
+            label_fg = "#aab1c2" if dark else "#6b7280"
+            c.itemconfigure(tile["bg"], fill=tile_bg,
+                            outline=("#252b37" if dark else BORDER))
+            c.itemconfigure(tile["icon"][0], fill=icon_fg)
+            c.itemconfigure(tile["icon"][1], fill=tile_bg)
+            c.itemconfigure(tile["icon"][2], fill=tile_bg)
+            c.itemconfigure(tile["label"], fill=label_fg)
+            c.itemconfigure(tile["count"], fill=icon_fg)
 
     # ---------------------------------------------------------------- pad
     def _redraw_pad(self, _event=None):
@@ -468,6 +475,7 @@ class MouseTestApp(tk.Tk):
         for key in self.pressed_buttons:
             self._set_mouse_highlight(key, True)
         self.pad.tag_raise("mouse")
+        theme.apply_new(self.pad, "tool")
 
     def _draw_mouse(self, cx, cy):
         pad = self.pad
@@ -587,8 +595,10 @@ class MouseTestApp(tk.Tk):
         self.active_tab = key
         for k, (lbl, line) in self.tab_widgets.items():
             active = k == key
-            lbl.configure(fg=ACCENT if active else MUTED)
-            line.configure(bg=ACCENT if active else CARD)
+            inactive = "#a3aab8" if theme.current() == "dark" else MUTED
+            inactive_bg = "#171a21" if theme.current() == "dark" else CARD
+            lbl.configure(fg=ACCENT if active else inactive)
+            line.configure(bg=ACCENT if active else inactive_bg)
         self.page_mouse.pack_forget()
         self.page_keyboard.pack_forget()
         page = self.page_mouse if key == "mouse" else self.page_keyboard
@@ -746,18 +756,20 @@ class MouseTestApp(tk.Tk):
 
     def _flash_wheel(self, key):
         box = self.wheel_boxes[key]
+        bg = "#2b2a55" if theme.current() == "dark" else ACCENT_SOFT
         for w in box["widgets"]:
             try:
-                w.configure(bg=ACCENT_SOFT)
+                w.configure(bg=bg)
             except tk.TclError:
                 pass
         self.after(160, lambda: self._unflash_wheel(key))
 
     def _unflash_wheel(self, key):
         box = self.wheel_boxes[key]
+        bg = "#1e232e" if theme.current() == "dark" else CHIP
         for w in box["widgets"]:
             try:
-                w.configure(bg=CHIP)
+                w.configure(bg=bg)
             except tk.TclError:
                 pass
 
@@ -912,6 +924,14 @@ class MouseTestApp(tk.Tk):
                                  dy=random.randint(-30, 30)))
             self.events.put(dict(base, type="wheel", delta=-120, horizontal=False))
         self.after(650, self._demo_tick)
+
+    def _theme_changed(self):
+        try:
+            self.kb_view.redraw()
+            self._redraw_pad()
+            self._show_tab(self.active_tab)
+        except tk.TclError:
+            pass
 
     # ---------------------------------------------------------------- close
     def _on_close(self):
