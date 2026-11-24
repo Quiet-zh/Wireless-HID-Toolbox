@@ -21,8 +21,8 @@ def _format(reading: proto.BatteryReading) -> str:
     charge = "充电中" if reading.charging else "未充电"
     return (
         f"{proto.PRODUCT_NAME} ({proto.VID:04X}:{proto.PID:04X})  "
-        f"电量 {reading.percent}%  "
-        f"({reading.voltage_v:.3f} V · {charge})"
+        f"电量 {reading.percent}%"
+        f"（设备自报 {reading.level_raw}% · {reading.voltage_v:.3f} V · {charge}）"
     )
 
 
