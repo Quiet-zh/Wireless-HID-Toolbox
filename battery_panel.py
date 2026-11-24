@@ -174,7 +174,7 @@ class BatteryPanel(tk.Tk):
         self.geometry("940x700")
         self.minsize(880, 620)
         self.configure(bg=BG)
-        self.protocol("WM_DELETE_WINDOW", self._on_close)
+        self.protocol("WM_DELETE_WINDOW", self._on_window_close)
 
         self._queue: queue.Queue = queue.Queue()
         self._ui_queue: queue.Queue = queue.Queue()
@@ -182,6 +182,8 @@ class BatteryPanel(tk.Tk):
         self._pending_refresh = False
         self._closing = False
         self._after_id = None
+        self._pump_id = None
+        self._poll_id = None
         self.snapshots: list[dr.DeviceSnapshot] = []
         self.cards: dict[str, DeviceCard] = {}
         self._tool_pids: set[int] = set()
@@ -198,8 +200,8 @@ class BatteryPanel(tk.Tk):
         self._hidden = False
         self._hiding = False
         self._hide_pending = False
-        self.after(300, self._poll_show)
-        self.after(100, self._pump)
+        self._poll_id = self.after(300, self._poll_show)
+        self._pump_id = self.after(100, self._pump)
         self.bind("<Unmap>", self._on_unmap)
         if demo:
             self._apply_snaps(self._demo_snaps)
@@ -261,25 +263,13 @@ class BatteryPanel(tk.Tk):
             selectcolor=BG, activebackground=BG, activeforeground=TEXT,
             font=("Microsoft YaHei UI", 9), bd=0, highlightthickness=0,
             command=self._schedule_next).pack(side="left", padx=(14, 0))
-        tk.Button(
-            bar, text="最小化", command=self._hide_to_tray,
-            bg="#d97706", fg="white", activebackground="#f59e0b",
-            activeforeground="white", relief="flat", bd=0,
-            font=("Microsoft YaHei UI", 9, "bold"), padx=12, pady=5,
-            cursor="hand2").pack(side="left", padx=(14, 0))
         self.tray_btn = tk.Button(
             bar, text="常驻托盘", command=self._toggle_tray,
             bg="#1f8f4e", fg="white", activebackground="#2ecc71",
             activeforeground="white", relief="flat", bd=0,
             font=("Microsoft YaHei UI", 9, "bold"), padx=12, pady=5,
             cursor="hand2")
-        self.tray_btn.pack(side="left", padx=(8, 0))
-        tk.Button(
-            bar, text="退出应用", command=self._exit_app,
-            bg="#5a2328", fg="#ffb4b4", activebackground="#7a2d34",
-            activeforeground="white", relief="flat", bd=0,
-            font=("Microsoft YaHei UI", 9, "bold"), padx=12, pady=5,
-            cursor="hand2").pack(side="left", padx=(8, 0))
+        self.tray_btn.pack(side="left", padx=(14, 0))
         self.status_dot = tk.Label(bar, text="●", bg=BG, fg=FAINT,
                                    font=("Microsoft YaHei UI", 9))
         self.status_dot.pack(side="right", padx=(0, 5))
@@ -355,7 +345,7 @@ class BatteryPanel(tk.Tk):
                     self.status_label.configure(text=payload, fg=FAINT)
         except queue.Empty:
             pass
-        self.after(100, self._pump)
+        self._pump_id = self.after(100, self._pump)
 
     def _apply_snaps(self, snaps):
         self._busy = False
@@ -435,8 +425,11 @@ class BatteryPanel(tk.Tk):
         self.after(2200, self._update_tray_button)
 
     def _on_unmap(self, _event=None):
-        """标题栏最小化/任务栏最小化也改成缩到托盘。"""
+        """标题栏最小化：按设置缩到托盘，或正常收起到任务栏。"""
         if self._closing or self._hidden or self._hide_pending:
+            return
+        mode = tc.load_config().get("window", {}).get("minimize", "tray")
+        if mode != "tray":
             return
         try:
             if self.state() == "iconic":
@@ -485,7 +478,7 @@ class BatteryPanel(tk.Tk):
                 self._hidden = False
             except tk.TclError:
                 pass
-        self.after(300, self._poll_show)
+        self._poll_id = self.after(300, self._poll_show)
 
     # ------------------------------------------------------------- 设置
     def _open_settings(self):
@@ -512,6 +505,26 @@ class BatteryPanel(tk.Tk):
         self._sync_cards()
 
     # ------------------------------------------------------------- 退出
+    def _close_all_visible(self):
+        """关闭主面板、设置/弹窗，以及由本应用打开的工具窗口；托盘保留。"""
+        self._stop_tools()
+        for child in list(self.winfo_children()):
+            if isinstance(child, tk.Toplevel):
+                try:
+                    child.destroy()
+                except tk.TclError:
+                    pass
+        self._on_close()
+
+    def _on_window_close(self):
+        mode = tc.load_config().get("window", {}).get("close", "current")
+        if mode == "exit":
+            self._exit_app()
+        elif mode == "all":
+            self._close_all_visible()
+        else:
+            self._on_close()
+
     def _stop_tools(self):
         for pid in list(self._tool_pids):
             try:
@@ -521,6 +534,16 @@ class BatteryPanel(tk.Tk):
                 pass
             self._tool_pids.discard(pid)
 
+    def _cancel_after(self):
+        for name in ("_after_id", "_pump_id", "_poll_id"):
+            aid = getattr(self, name, None)
+            if aid is not None:
+                try:
+                    self.after_cancel(aid)
+                except tk.TclError:
+                    pass
+                setattr(self, name, None)
+
     def _exit_app(self):
         if not messagebox.askyesno(
                 "退出应用",
@@ -529,12 +552,7 @@ class BatteryPanel(tk.Tk):
                 parent=self):
             return
         self._closing = True
-        if self._after_id is not None:
-            try:
-                self.after_cancel(self._after_id)
-            except tk.TclError:
-                pass
-            self._after_id = None
+        self._cancel_after()
         self._stop_tools()
         if tc.is_tray_running():
             tc.post_to_tray(tc.MSG_QUIT)
@@ -549,13 +567,9 @@ class BatteryPanel(tk.Tk):
 
     def _on_close(self):
         self._closing = True
+        self._cancel_after()
         tc.clear_panel_hwnd(self._hwnd)
         tc.consume_panel_show()
-        if self._after_id is not None:
-            try:
-                self.after_cancel(self._after_id)
-            except tk.TclError:
-                pass
         self.destroy()
 
     # ------------------------------------------------------------- demo
@@ -596,9 +610,9 @@ class SettingsWindow(tk.Toplevel):
         self.parent = parent
         self.demo = demo
         self.on_change = on_change
-        self.title("设置")
-        self.geometry("640x720")
-        self.minsize(600, 600)
+        self.title("外设电量 · 设置")
+        self.geometry("660x860")
+        self.minsize(620, 700)
         self.configure(bg=BG)
         self.transient(parent)
         self.device_vars = []
@@ -680,6 +694,43 @@ class SettingsWindow(tk.Toplevel):
                              font=("Microsoft YaHei UI", 9))
         combo.pack(side="left", padx=(8, 0))
         combo.bind("<<ComboboxSelected>>", lambda _e: self._interval_changed())
+
+        # 窗口按钮行为
+        win_box = tk.LabelFrame(body, text=" 标题栏按钮 ", bg=BG, fg=SUB, bd=0,
+                                font=("Microsoft YaHei UI", 9, "bold"))
+        win_box.pack(fill="x", pady=(0, 8))
+        win_cfg = tc.load_config().get("window", {})
+        self.min_mode = tk.StringVar(
+            value=win_cfg.get("minimize", "tray"))
+        self.close_mode = tk.StringVar(
+            value=win_cfg.get("close", "current"))
+        row = tk.Frame(win_box, bg=BG)
+        row.pack(fill="x", padx=8, pady=(8, 2))
+        tk.Label(row, text="最小化（-）", bg=BG, fg=SUB, width=11,
+                 anchor="w", font=("Microsoft YaHei UI", 9)).pack(side="left")
+        for text, value in (("最小化到托盘", "tray"),
+                            ("正常收起窗口", "taskbar")):
+            tk.Radiobutton(
+                row, text=text, variable=self.min_mode, value=value,
+                bg=BG, fg=SUB, selectcolor=BG, activebackground=BG,
+                activeforeground=TEXT, font=("Microsoft YaHei UI", 9),
+                bd=0, highlightthickness=0,
+                command=self._save_window_behavior).pack(side="left",
+                                                         padx=(0, 10))
+        row = tk.Frame(win_box, bg=BG)
+        row.pack(fill="x", padx=8, pady=(2, 8))
+        tk.Label(row, text="关闭（×）", bg=BG, fg=SUB, width=11,
+                 anchor="w", font=("Microsoft YaHei UI", 9)).pack(side="left")
+        for text, value in (("仅关闭主界面", "current"),
+                            ("关闭所有可见窗口", "all"),
+                            ("完全退出应用", "exit")):
+            tk.Radiobutton(
+                row, text=text, variable=self.close_mode, value=value,
+                bg=BG, fg=SUB, selectcolor=BG, activebackground=BG,
+                activeforeground=TEXT, font=("Microsoft YaHei UI", 9),
+                bd=0, highlightthickness=0,
+                command=self._save_window_behavior).pack(side="left",
+                                                         padx=(0, 8))
 
         # 工具
         tool_box = tk.LabelFrame(body, text=" 工具 ", bg=BG, fg=SUB, bd=0,
@@ -802,6 +853,15 @@ class SettingsWindow(tk.Toplevel):
         self.boot_msg.configure(
             text=f"桌面链接失败：{errors[0]}" if errors else "桌面链接已创建",
             fg=RED if errors else GREEN)
+
+    def _save_window_behavior(self):
+        cfg = tc.load_config()
+        cfg["window"] = {"minimize": self.min_mode.get(),
+                         "close": self.close_mode.get()}
+        tc.save_config(cfg)
+        self.boot_msg.configure(
+            text=f"窗口按钮：- → {self.min_mode.get()}，× → {self.close_mode.get()}",
+            fg=GREEN)
 
     def _interval_changed(self):
         seconds = INTERVALS.get(self.interval_var.get(), 60)

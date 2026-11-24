@@ -51,6 +51,10 @@ DEFAULT_CONFIG = {
     "interval": 60,        # 托盘轮询间隔（秒）
     "autostart": True,     # 开机自启
     "devices": {},         # VID:PID -> {name, show, tray, order}
+    "window": {            # 主界面标题栏按钮行为
+        "minimize": "tray",    # tray / taskbar
+        "close": "current",    # current / all / exit
+    },
 }
 
 INTERVAL_CHOICES = [(30, "30 秒"), (60, "1 分钟"), (120, "2 分钟"),
@@ -84,6 +88,7 @@ USER32.GetWindowTextW.argtypes = [ctypes.c_void_p, wintypes.LPWSTR,
 # --------------------------------------------------------------------------
 def load_config() -> dict:
     cfg = dict(DEFAULT_CONFIG)
+    cfg["window"] = dict(DEFAULT_CONFIG["window"])
     path = CONFIG_PATH
     if not os.path.exists(path) and os.path.exists(LEGACY_CONFIG_PATH):
         path = LEGACY_CONFIG_PATH
@@ -92,7 +97,11 @@ def load_config() -> dict:
             data = json.load(f)
         if isinstance(data, dict):
             for k in DEFAULT_CONFIG:
-                if k in data:
+                if k not in data:
+                    continue
+                if k == "window" and isinstance(data[k], dict):
+                    cfg["window"].update(data[k])
+                else:
                     cfg[k] = data[k]
     except Exception:
         pass
