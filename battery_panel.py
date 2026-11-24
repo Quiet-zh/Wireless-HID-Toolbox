@@ -200,6 +200,8 @@ class BatteryPanel(tk.Tk):
         self._hidden = False
         self._hiding = False
         self._hide_pending = False
+        self._tray_stopping = False
+        self._tray_notice_until = 0.0
         self._poll_id = self.after(300, self._poll_show)
         self._pump_id = self.after(100, self._pump)
         self.bind("<Unmap>", self._on_unmap)
@@ -328,6 +330,9 @@ class BatteryPanel(tk.Tk):
                 kind, payload = self._ui_queue.get_nowait()
                 if kind == "tray":
                     self._busy = False
+                    if payload:
+                        self._tray_stopping = False
+                        self._tray_notice_until = 0.0
                     self.status_label.configure(
                         text="托盘已启动" if payload else "托盘启动失败",
                         fg=GREEN if payload else RED)
@@ -354,9 +359,10 @@ class BatteryPanel(tk.Tk):
         self._sync_cards()
         stamp = time.strftime("%H:%M:%S")
         visible = sum(1 for s in snaps if s.show)
-        self.status_label.configure(text=f"已更新 {stamp} · {visible} 张卡片",
-                                    fg=FAINT)
-        self.status_dot.configure(fg=GREEN)
+        if time.monotonic() >= self._tray_notice_until:
+            self.status_label.configure(text=f"已更新 {stamp} · {visible} 张卡片",
+                                        fg=FAINT)
+            self.status_dot.configure(fg=GREEN)
         self._schedule_next()
         if self._pending_refresh:
             self._pending_refresh = False
@@ -398,30 +404,34 @@ class BatteryPanel(tk.Tk):
     # ------------------------------------------------------------- 托盘
     def _update_tray_button(self):
         running = tc.is_tray_running()
-        current = self.status_label.cget("text")
         if running:
             self.tray_btn.configure(
                 text="退出托盘", bg="#5a2328", fg="#ffb4b4",
                 activebackground="#7a2d34", activeforeground="white")
             self.status_dot.configure(fg=GREEN)
-            if current.startswith("正在退出"):
+            if self._tray_stopping:
                 self.status_label.configure(text="托盘仍在运行", fg=AMBER)
         else:
             self.tray_btn.configure(
                 text="常驻托盘", bg="#1f8f4e", fg="white",
                 activebackground="#2ecc71", activeforeground="white")
-            if current.startswith("正在退出") or current.startswith("托盘仍在"):
+            if self._tray_stopping:
+                self._tray_stopping = False
+                self._tray_notice_until = time.monotonic() + 3.0
                 self.status_label.configure(text="托盘已退出", fg=FAINT)
                 self.status_dot.configure(fg=FAINT)
 
     def _toggle_tray(self):
         if tc.is_tray_running():
             tc.post_to_tray(tc.MSG_QUIT)
+            self._tray_stopping = True
             self.status_label.configure(text="正在退出托盘…", fg=FAINT)
             self.after(900, self._update_tray_button)
             self.after(2200, self._update_tray_button)
             return
 
+        self._tray_stopping = False
+        self._tray_notice_until = 0.0
         def worker():
             ok = tc.start_tray_app()
             self._ui_queue.put(("tray", ok))
