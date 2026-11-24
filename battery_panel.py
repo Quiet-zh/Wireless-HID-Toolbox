@@ -231,11 +231,16 @@ class BatteryPanel(tk.Tk):
 
         wrap = tk.Frame(self, bg=BG)
         wrap.pack(fill="both", expand=True, padx=14, pady=(4, 0))
+        wrap.grid_rowconfigure(0, weight=1)
+        wrap.grid_columnconfigure(0, weight=1)
         self.canvas = tk.Canvas(wrap, bg=BG, highlightthickness=0)
-        scroll = ttk.Scrollbar(wrap, orient="vertical", command=self.canvas.yview)
-        self.canvas.configure(yscrollcommand=scroll.set)
-        self.canvas.pack(side="left", fill="both", expand=True)
-        scroll.pack(side="right", fill="y")
+        self.scroll = ttk.Scrollbar(wrap, orient="vertical",
+                                    command=self.canvas.yview)
+        self.canvas.configure(yscrollcommand=self.scroll.set)
+        self.canvas.grid(row=0, column=0, sticky="nsew")
+        self._scroll_visible = False
+        self.scroll.grid(row=0, column=1, sticky="ns")
+        self.scroll.grid_remove()
 
         self.inner = tk.Frame(self.canvas, bg=BG)
         self.inner_id = self.canvas.create_window((0, 0), window=self.inner,
@@ -283,12 +288,35 @@ class BatteryPanel(tk.Tk):
 
     def _on_inner_configure(self, _event=None):
         self.canvas.configure(scrollregion=self.canvas.bbox("all"))
+        self._update_scrollbar_visibility()
 
     def _on_canvas_configure(self, event):
         self.canvas.itemconfigure(self.inner_id, width=event.width)
+        self._update_scrollbar_visibility()
+
+    def _update_scrollbar_visibility(self):
+        """滚动条只在内容高度超过可视区域时出现。"""
+        try:
+            if not self.winfo_exists():
+                return
+            bbox = self.canvas.bbox("all")
+            view_h = self.canvas.winfo_height()
+            content_h = (bbox[3] - bbox[1]) if bbox else 0
+            need = content_h > view_h + 1
+            if need == self._scroll_visible:
+                return
+            self._scroll_visible = need
+            if need:
+                self.scroll.grid()
+            else:
+                self.scroll.grid_remove()
+                self.canvas.yview_moveto(0)
+        except tk.TclError:
+            pass
 
     def _on_wheel(self, event):
-        self.canvas.yview_scroll(int(-event.delta / 120), "units")
+        if self._scroll_visible:
+            self.canvas.yview_scroll(int(-event.delta / 120), "units")
 
     # ------------------------------------------------------------- 刷新
     def refresh(self):
@@ -396,6 +424,7 @@ class BatteryPanel(tk.Tk):
             self.empty_label.grid(row=0, column=0, columnspan=2, pady=80)
         self.inner.update_idletasks()
         self.canvas.configure(scrollregion=self.canvas.bbox("all"))
+        self._update_scrollbar_visibility()
 
     def _schedule_next(self):
         if self._after_id is not None:
