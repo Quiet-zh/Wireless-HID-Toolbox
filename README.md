@@ -1,6 +1,6 @@
 # Wireless HID Toolbox（2.4G 外设工具箱）
 
-当前版本：**v1.4.0**（更新记录见 [CHANGELOG.md](CHANGELOG.md)）
+当前版本：**v1.5.0**（更新记录见 [CHANGELOG.md](CHANGELOG.md)）
 
 Windows 10/11 的 2.4G 无线外设电量与 HID 调试工具箱。纯 Python 标准库 +
 `ctypes` + `tkinter`，运行时不依赖任何第三方库。
@@ -8,6 +8,8 @@ Windows 10/11 的 2.4G 无线外设电量与 HID 调试工具箱。纯 Python �
 - **电量**：EWEADN 8K、PMO WAVE75、罗技 G304、Monster AiMouse，以及协议表里的其他设备
 - **设备目录**：Monster AiMouse（`248A:60AB`）已登记，可在面板/托盘/测试面板显示，
   并通过 `0xFF91` 私有口读取电量（实验性解析，见「支持的设备与协议」）
+- **语音解码**：Monster AiMouse 长按语音键时，`0xFF91` 会回传 ADPCM 语音，
+  `aimouse_voice.py` 可还原成 16kHz WAV（见「语音解码」）
 - **主界面**：可选设备卡片、统一字段、托盘图标逐设备开关、最小化到托盘
 - **托盘**：每台勾选的设备一个数字图标，点击打开/恢复面板
 - **测试**：鼠标键盘测试，多设备切换监听、按键/移动/滚轮/坐标/点击统计
@@ -192,6 +194,40 @@ python mouse_test_gui.py --demo
 
 ![键盘全配列测试](docs/keyboard_test.png)
 
+## 语音解码（Monster AiMouse）
+
+`0xFF91` 私有口除了电量，还会在长按语音键时回传 **IMA ADPCM 压缩语音**。
+`aimouse_voice.py` 可把它还原成 16kHz / 16bit 单声道 WAV：
+
+```python
+import aimouse_voice as av
+
+frames = [...]                        # 从 0xFF91 读到的 33 字节帧
+samples = av.decode_frames(frames)    # -> 16bit 样本
+av.save_wav("voice.wav", av.normalize(samples))
+```
+
+帧结构（反汇编 `AiMouse.exe` 0x4E6890 处的解码函数确认）：
+
+| 偏移 | 内容 |
+| --- | --- |
+| `[0]` | `0x1B` 帧标识 |
+| `[1:3]` | predictor，int16 小端（每帧重置） |
+| `[3]` | step_index，0–88（越界截断） |
+| `[4]` | `0xBE` 保留字节 |
+| `[5:33]` | 28 字节 = 56 个 4-bit nibble，**低 4 位先** |
+
+每帧 56 样本 @16000Hz = 3.5ms，与实测约 280 帧/秒吻合。
+
+**降噪建议**：4-bit ADPCM 量化噪声接近白噪声，理论 SNR 约 20dB。
+
+- **人耳试听**：可用 `noisereduce`（可选依赖，不在运行时依赖内）做谱减，
+  `prop_decrease≈0.75` 在"沙沙"与"回音"之间较平衡
+- **送 ASR 转文字**：建议只用 `av.highpass()` 轻度高通，**不要重度降噪** ——
+  谱减产生的"音乐噪声"是非自然伪影，反而更容易让语音识别出错
+
+> 官方驱动的做法正是把 ADPCM 原样发往云端 ASR、不做本地降噪，原因就在这里。
+
 ## HID 调试台
 
 ```bat
@@ -275,13 +311,14 @@ python tray_app.py --quit
 python -m unittest discover -s tests -v
 ```
 
-共 **56** 个用例：
+共 **72** 个用例：
 
 - 8 个鼠标协议/电压曲线
 - 5 个 Raw Input 事件解析
 - 4 个 PMO 键盘
 - 12 个多厂商协议帧/校验/解析
 - 5 个 AiMouse 0xFF91 帧解析与设备匹配
+- 16 个 AiMouse 语音解码/分段/WAV 输出
 - 8 个设备目录/类型/删除恢复
 - 3 个 104 键布局数据
 - 4 个配置默认值/合并/主题回退
