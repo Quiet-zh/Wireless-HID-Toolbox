@@ -10,3 +10,5 @@ build/
 dist/
 *.spec
 tmp_onefile/
+.vscode/
+.workbuddy/memory/
