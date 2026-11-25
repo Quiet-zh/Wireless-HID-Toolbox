@@ -1,6 +1,6 @@
 # Wireless HID Toolbox（2.4G 外设工具箱）
 
-当前版本：**v1.10.0**（更新记录见 [CHANGELOG.md](CHANGELOG.md)）
+当前版本：**v1.11.0**（更新记录见 [CHANGELOG.md](CHANGELOG.md)）
 
 Windows 10/11 的 2.4G 无线外设电量与 HID 调试工具箱。纯 Python 标准库 +
 `ctypes` + `tkinter`，运行时不依赖任何第三方库。
@@ -277,6 +277,7 @@ av.save_wav("voice.wav", av.normalize(samples))
 | `save_dir` | 音频保存目录 | `%APPDATA%\ExtBatteryTray\voice` |
 | `model_dir` | Vosk 中文模型目录 | `…\models\vosk-model-small-cn-0.22` |
 | `asr_backend` | 识别后端：0 自动（本地优先）/ 1 Vosk / 2 剪贴板 / 3 云端 | 0 |
+| `asr_grammar` | 识别词表（可选），逗号分隔；留空=通用识别 | 空 |
 
 ### 识别后端（自动降级）
 
@@ -288,6 +289,11 @@ av.save_wav("voice.wav", av.normalize(samples))
 | 云端 ASR | `websockets`（可选） | `aimouse_cloud_asr.py` 实现官方 `asr.miclink.net/ws` 协议；凭据可配置，或只读从驱动进程内存取 |
 | Vosk | `vosk` + 中文模型 | 本地离线；小模型对 4-bit ADPCM 噪声鲁棒性有限 |
 | 剪贴板桥接 | 无 | 官方驱动松开语音键后会把识别文字写入剪贴板，窗口监听序列号变化取回；仅录制后可用 |
+
+**识别词表（可选）**：在设置里填 `测试,语音,输入,一二三` 这类候选词，
+Vosk 会启用 grammar 约束。实测小模型通用识别为「此事 语音 输入 与 啊 上」，
+启用词表后为「测试 语音 输入 一二三」。适合固定命令/口令场景；
+日常自由说话请留空，或换更强的 `vosk-model-cn-0.22` 大模型（1.3GB）。
 
 三者都不可用时只保存音频，录制、播放、删除、设置不受影响。
 项目主体仍保持零第三方运行时依赖。
@@ -387,7 +393,7 @@ python tray_app.py --quit
 python -m unittest discover -s tests -v
 ```
 
-共 **108** 个用例：
+共 **113** 个用例：
 
 - 8 个鼠标协议/电压曲线
 - 5 个 Raw Input 事件解析
@@ -398,6 +404,7 @@ python -m unittest discover -s tests -v
 - 6 个语音窗口参数与配置读写
 - 21 个云端 ASR 帧构造/响应解析/后端选择
 - 9 个纯本地解码（XOR 密钥/连续 IMA/真实帧回归）
+- 5 个识别词表设置与解析
 - 8 个设备目录/类型/删除恢复
 - 3 个 104 键布局数据
 - 4 个配置默认值/合并/主题回退

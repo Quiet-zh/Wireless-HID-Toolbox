@@ -16,7 +16,7 @@ class TestParamDefs(unittest.TestCase):
             self.assertTrue(key)
             self.assertTrue(label)
             self.assertTrue(desc)
-            self.assertIn(kind, ("int", "bool", "path"))
+            self.assertIn(kind, ("int", "bool", "path", "text"))
 
     def test_defaults_match(self):
         for key, label, desc, default, *_rest in avp.PARAM_DEFS:

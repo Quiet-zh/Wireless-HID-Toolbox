@@ -16,6 +16,7 @@ from __future__ import annotations
 import json
 import os
 import queue
+import re
 import threading
 import time
 import tkinter as tk
@@ -61,8 +62,10 @@ PARAM_DEFS = [
      DEFAULT_SAVE, None, None, None, "path"),
     ("model_dir", "识别模型目录", "Vosk 中文模型所在目录",
      DEFAULT_MODEL, None, None, None, "path"),
-    ("asr_backend", "识别后端", "0 自动(云端/Vosk/剪贴板) 1 仅Vosk 2 剪贴板 3 云端",
+    ("asr_backend", "识别后端", "0 自动(本地优先) 1 仅Vosk 2 剪贴板 3 云端",
      0, 0, 3, 1, "int"),
+    ("asr_grammar", "识别词表(可选)", "逗号分隔的候选词；留空=通用识别，填了可显著提升固定命令准确率",
+     "", None, None, None, "text"),
 ]
 
 DEFAULTS = {d[0]: d[3] for d in PARAM_DEFS}
@@ -164,8 +167,9 @@ def save_config(cfg: dict) -> None:
 class AsrEngine:
     """Vosk 离线识别封装；不可用时全部返回 None。"""
 
-    def __init__(self, model_dir: str):
+    def __init__(self, model_dir: str, grammar: str = ""):
         self.model_dir = model_dir
+        self.grammar = grammar or ""
         self._model = None
         self._rec = None
         self._lock = threading.Lock()
@@ -188,14 +192,23 @@ class AsrEngine:
             self._model = Model(self.model_dir)
         return self._model
 
+    def _make_rec(self, KaldiRecognizer):
+        """构造识别器；设置了词表时启用 Vosk grammar 约束。"""
+        model = self._ensure_model()
+        words = [w for w in re.split(r"[,，\s]+", self.grammar.strip()) if w]
+        if words:
+            return KaldiRecognizer(
+                model, av.SAMPLE_RATE,
+                json.dumps(words + ["[unk]"], ensure_ascii=False))
+        return KaldiRecognizer(model, av.SAMPLE_RATE)
+
     def begin(self) -> bool:
         """开始一次流式识别。"""
         if not self.available():
             return False
         try:
             from vosk import KaldiRecognizer
-            model = self._ensure_model()
-            self._rec = KaldiRecognizer(model, av.SAMPLE_RATE)
+            self._rec = self._make_rec(KaldiRecognizer)
             return True
         except Exception as exc:
             self.error = str(exc)
@@ -229,8 +242,7 @@ class AsrEngine:
             return None
         try:
             from vosk import KaldiRecognizer
-            model = self._ensure_model()
-            rec = KaldiRecognizer(model, av.SAMPLE_RATE)
+            rec = self._make_rec(KaldiRecognizer)
             with wave.open(wav_path, "rb") as fh:
                 while True:
                     data = fh.readframes(4000)
@@ -395,6 +407,16 @@ class VoiceSettingsDialog(tk.Toplevel):
         var = tk.StringVar(value=str(self.cfg.get(key, "")))
         self.vars[key] = var
 
+        if kind == "text":
+            tk.Entry(row, textvariable=var, bg=themed(TRACK),
+                     fg=themed(TEXT), insertbackground=themed(TEXT),
+                     relief="flat", font=("Microsoft YaHei UI", 9),
+                     width=52).pack(side="left", fill="x", expand=True, ipady=4)
+            tk.Label(row, text="留空为通用识别", bg=themed(CARD),
+                     fg=themed(FAINT),
+                     font=("Microsoft YaHei UI", 8)).pack(side="left", padx=10)
+            return
+
         if kind == "path":
             entry = tk.Entry(row, textvariable=var, bg=themed(TRACK),
                              fg=themed(TEXT), insertbackground=themed(TEXT),
@@ -448,7 +470,7 @@ class VoiceSettingsDialog(tk.Toplevel):
         cfg = dict(self.cfg)
         for key, label, desc, default, lo, hi, step, kind in PARAM_DEFS:
             raw = self.vars[key].get().strip()
-            if kind == "path":
+            if kind in ("path", "text"):
                 cfg[key] = raw
                 continue
             try:
@@ -480,7 +502,8 @@ class VoiceWindow(tk.Toplevel):
         self.cfg = load_config()
         self.events: queue.Queue = queue.Queue()
         self.recorder: Optional[Recorder] = None
-        self.asr = AsrEngine(self.cfg.get("model_dir", DEFAULT_MODEL))
+        self.asr = AsrEngine(self.cfg.get("model_dir", DEFAULT_MODEL),
+                             self.cfg.get("asr_grammar", ""))
         self._asr_active = False
         self._partial = ""
         self._playing = False
@@ -594,7 +617,8 @@ class VoiceWindow(tk.Toplevel):
 
     def _start_monitor(self) -> None:
         self.cfg = load_config()
-        self.asr = AsrEngine(self.cfg.get("model_dir", DEFAULT_MODEL))
+        self.asr = AsrEngine(self.cfg.get("model_dir", DEFAULT_MODEL),
+                             self.cfg.get("asr_grammar", ""))
         self.recorder = Recorder(self.events,
                                  int(self.cfg.get("max_seconds", 30)))
         self.recorder.start()
@@ -903,7 +927,8 @@ class VoiceWindow(tk.Toplevel):
         def done(cfg):
             save_config(cfg)
             self.cfg = cfg
-            self.asr = AsrEngine(cfg.get("model_dir", DEFAULT_MODEL))
+            self.asr = AsrEngine(cfg.get("model_dir", DEFAULT_MODEL),
+                                 cfg.get("asr_grammar", ""))
             self._refresh_list()
             self.status.configure(text="设置已保存", fg=themed(GREEN))
         VoiceSettingsDialog(self, self.cfg, done)

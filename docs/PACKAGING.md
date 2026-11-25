@@ -56,7 +56,7 @@ build_exe.bat 2
 
 - `main.py` 统一入口
 - `app.ico` 图标
-- `version_info.txt` Windows 版本资源（当前 v1.10.0）
+- `version_info.txt` Windows 版本资源（当前 v1.11.0）
 - `--optimize 2`
 - 排除 unittest/doctest/pydoc/pdb/test
 - 隐藏导入：面板、托盘、鼠标键盘测试、HID 调试台、主题、协议模块
@@ -76,7 +76,7 @@ dist\WirelessHIDToolbox.exe --tool mouse-test
 dist\WirelessHIDToolbox.exe --tool hid-debug
 ```
 
-- [ ] 标题显示 `外设电量 v1.10.0`
+- [ ] 标题显示 `外设电量 v1.11.0`
 - [ ] 主面板、设置、协议表可打开
 - [ ] 鼠标键盘测试和 HID 调试台可打开
 - [ ] 托盘启动/退出正常

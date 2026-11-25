@@ -126,5 +126,29 @@ class TestBackendSettings(unittest.TestCase):
         self.assertIsInstance(vp.clipboard_text(), str)
 
 
+class TestGrammarSettings(unittest.TestCase):
+    def test_grammar_param_present(self):
+        item = next(d for d in vp.PARAM_DEFS if d[0] == "asr_grammar")
+        self.assertEqual(item[7], "text")
+        self.assertEqual(item[3], "")
+
+    def test_engine_keeps_grammar(self):
+        engine = vp.AsrEngine("some_dir", "测试,语音,输入,一二三")
+        self.assertEqual(engine.grammar, "测试,语音,输入,一二三")
+
+    def test_engine_default_grammar_empty(self):
+        self.assertEqual(vp.AsrEngine("some_dir").grammar, "")
+
+    def test_grammar_word_split(self):
+        # 逗号/中文逗号/空白都应能切分
+        import re
+        for text in ("测试,语音,输入", "测试，语音，输入", "测试 语音 输入"):
+            words = [w for w in re.split(r"[,，\s]+", text.strip()) if w]
+            self.assertEqual(words, ["测试", "语音", "输入"])
+
+    def test_param_count(self):
+        self.assertGreaterEqual(len(vp.PARAM_DEFS), 9)
+
+
 if __name__ == "__main__":
     unittest.main()
