@@ -1,6 +1,6 @@
 # Wireless HID Toolbox（2.4G 外设工具箱）
 
-当前版本：**v1.12.0**（更新记录见 [CHANGELOG.md](CHANGELOG.md)）
+当前版本：**v1.12.1**（更新记录见 [CHANGELOG.md](CHANGELOG.md)）
 
 Windows 10/11 的 2.4G 无线外设电量与 HID 调试工具箱。纯 Python 标准库 +
 `ctypes` + `tkinter`，运行时不依赖任何第三方库。
@@ -22,6 +22,8 @@ Windows 10/11 的 2.4G 无线外设电量与 HID 调试工具箱。纯 Python �
 - **托盘**：每台勾选的设备一个数字图标，点击打开/恢复面板
 - **测试**：鼠标键盘测试，多设备切换监听、按键/移动/滚轮/坐标/点击统计
 - **调试**：完整 HID 调试台（Feature / Output / Input / 探 ID / 手动标定）
+- **UI 约定**：所有纵向/横向滚动条仅在内容超出对应可视区域时显示
+  （`ui_common.AutoScrollbar`），内容未超出时隐藏、不占位
 - **系统集成**：开机自启、桌面入口、上次电量缓存
 - **打包**：`main.py` 统一入口，onefile / onedir 可选
 
@@ -405,7 +407,7 @@ python tray_app.py --quit
 python -m unittest discover -s tests -v
 ```
 
-共 **115** 个用例：
+共 **120** 个用例：
 
 - 8 个鼠标协议/电压曲线
 - 5 个 Raw Input 事件解析
@@ -418,6 +420,7 @@ python -m unittest discover -s tests -v
 - 9 个纯本地解码（XOR 密钥/连续 IMA/真实帧回归）
 - 5 个识别词表设置与解析
 - 2 个纯本地模式开关与强制 Vosk 后端
+- 5 个按需滚动条 GUI 回归（显隐/横向/删除后复原）
 - 8 个设备目录/类型/删除恢复
 - 3 个 104 键布局数据
 - 4 个配置默认值/合并/主题回退

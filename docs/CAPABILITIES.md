@@ -95,9 +95,10 @@
 | `aimouse_voice_panel.py` | 语音窗口、录制线程、Vosk 封装、剪贴板桥接、设置 UI |
 | `aimouse_cloud_asr.py` | 官方云端 ASR 协议（可选，`websockets`） |
 | `hid_win.py` | Windows HID 枚举/读写（ctypes） |
+| `ui_common.py` | 按需滚动条（`AutoScrollbar`）：纵/横向仅在内容超出时显示 |
 | `tools/verify_local_decode.py` | 独立验证纯本地解码链路（零依赖） |
 | `docs/AiMouse-RE-Notes.md` | 完整逆向过程、反汇编证据、协议细节 |
-| `tests/` | 115 个自动化用例 |
+| `tests/` | 120 个自动化用例 |
 
 ## 6. 验证与自检
 
@@ -124,3 +125,4 @@ python main.py --version
 | **1.10.0** | **纯本地解码打通**（精确密钥 + 跨帧连续 IMA） |
 | 1.11.0 | Vosk 识别词表约束（固定命令 100% 正确） |
 | 1.12.0 | 纯本地模式开关、界面模式徽标、能力文档整理 |
+| 1.12.1 | 全局按需滚动条组件；语音列表/设置对话框/调试台滚动条改为按需显示 |

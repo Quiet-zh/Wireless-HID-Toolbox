@@ -29,6 +29,7 @@ import aimouse_voice_capture as avc
 import hid_win as hw
 import theme
 import tray_common as tc
+from ui_common import attach_auto_scrollbar
 
 BG = "#0f1115"
 CARD = "#171a21"
@@ -358,14 +359,14 @@ class VoiceSettingsDialog(tk.Toplevel):
         body = tk.Frame(self, bg=themed(BG))
         body.pack(fill="both", expand=True, padx=20, pady=8)
         canvas = tk.Canvas(body, bg=themed(BG), highlightthickness=0)
-        bar = ttk.Scrollbar(body, orient="vertical", command=canvas.yview)
         inner = tk.Frame(canvas, bg=themed(BG))
         inner.bind("<Configure>",
                    lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
         canvas.create_window((0, 0), window=inner, anchor="nw")
-        canvas.configure(yscrollcommand=bar.set)
         canvas.pack(side="left", fill="both", expand=True)
-        bar.pack(side="right", fill="y")
+        # 纵向滚动条仅在参数行总高超过对话框可视高度时显示
+        attach_auto_scrollbar(body, canvas, orient="vertical",
+                              layout="pack", side="right", fill="y")
         canvas.bind_all("<MouseWheel>",
                         lambda e: canvas.yview_scroll(int(-e.delta / 120),
                                                       "units"))
@@ -558,10 +559,10 @@ class VoiceWindow(tk.Toplevel):
             highlightthickness=0, font=("Consolas", 9), activestyle="none")
         self.listbox.pack(side="left", fill="both", expand=True, padx=(8, 0),
                           pady=8)
-        sb = ttk.Scrollbar(wrap, orient="vertical",
-                           command=self.listbox.yview)
-        sb.pack(side="right", fill="y")
-        self.listbox.configure(yscrollcommand=sb.set)
+        # 纵向滚动条仅在录音条数超过列表可视高度时显示
+        self.list_scroll = attach_auto_scrollbar(
+            wrap, self.listbox, orient="vertical", layout="pack",
+            side="right", fill="y")
         self.listbox.bind("<<ListboxSelect>>", self._on_select)
 
         right = tk.Frame(body, bg=themed(BG))
@@ -793,6 +794,7 @@ class VoiceWindow(tk.Toplevel):
         self._paths: list[str] = []
         if not os.path.isdir(save_dir):
             self.count_label.configure(text="0 条")
+            self._refresh_list_scroll()
             return
         files = sorted((f for f in os.listdir(save_dir)
                         if f.lower().endswith(".wav")), reverse=True)
@@ -801,6 +803,16 @@ class VoiceWindow(tk.Toplevel):
             self._paths.append(path)
             self.listbox.insert("end", "  %s   %s" % (name, self._duration(path)))
         self.count_label.configure(text="%d 条" % len(files))
+        self._refresh_list_scroll()
+
+    def _refresh_list_scroll(self) -> None:
+        """列表内容变化后重新判定滚动条显隐（等布局完成再算）。"""
+        bar = getattr(self, "list_scroll", None)
+        if bar is not None:
+            try:
+                self.after_idle(bar.refresh)
+            except tk.TclError:
+                pass
 
     @staticmethod
     def _duration(path: str) -> str:

@@ -22,6 +22,7 @@ import tkinter as tk
 from tkinter import ttk
 
 import hid_win as hw
+from ui_common import attach_auto_scrollbar
 import theme
 import window_behavior as wb
 from version import __version__
@@ -105,12 +106,12 @@ class DebugApp(tk.Tk):
                 ("path", "设备路径", 420)):
             self.tree.heading(col, text=text)
             self.tree.column(col, width=width, anchor="w", stretch=(col == "path"))
-        ys = ttk.Scrollbar(left, orient="vertical", command=self.tree.yview)
-        xs = ttk.Scrollbar(left, orient="horizontal", command=self.tree.xview)
-        self.tree.configure(yscrollcommand=ys.set, xscrollcommand=xs.set)
         self.tree.grid(row=0, column=0, sticky="nsew")
-        ys.grid(row=0, column=1, sticky="ns")
-        xs.grid(row=1, column=0, sticky="ew")
+        # 纵/横滚动条各自只在对应内容超出可视区域时显示
+        attach_auto_scrollbar(left, self.tree, orient="vertical",
+                              layout="grid", row=0, column=1, sticky="ns")
+        attach_auto_scrollbar(left, self.tree, orient="horizontal",
+                              layout="grid", row=1, column=0, sticky="ew")
         left.grid_rowconfigure(0, weight=1)
         left.grid_columnconfigure(0, weight=1)
         self.tree.bind("<<TreeviewSelect>>", self._on_select)
