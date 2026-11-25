@@ -313,6 +313,8 @@ SPECS: list[Spec] = [
          usage_page=0xFF02, min_output=17, priority=5),
     Spec("PMO WAVE75（本机键盘）", "pmo", 0x36B0, (0x3002, 0x3009),
          usage_page=0xFF60, priority=5),
+    Spec("Monster AiMouse（本机鼠标）", "aimouse", 0x248A, (0x60AB,),
+         usage_page=0xFF91, min_input=33, priority=5),
 
     # ---- ATK / VXE / VGN ----
     Spec("ATK/VXE 协议 1（17B/0x55）", "atk1", 0x373B,
@@ -449,6 +451,51 @@ def read_pmo(spec: Spec, ifaces: list[HidInterface],
                        "full" if r.charging == 2 else "discharging"),
                    source="PMO RDR 0xFF60（本机协议）",
                    detail=f"{r.charging_text} · {'2.4G' if r.dongle else 'USB'}")
+
+
+def parse_aimouse_report(rep: bytes) -> Optional[int]:
+    """解析 Monster AiMouse 的 0xFF91 主动上报帧，取电量百分比。
+
+    本机实测帧（2026-11-25，共 3 种，约 0.8 帧/秒）：
+        0C 4D 06 69 00 64 04 01 00 4C ...   <- 电量帧，偏移 5 = 100
+        0C 4D 05 69 00 64 04 01 00 4C ...   <- 电量帧，偏移 5 = 100
+        0C 4D 05 67 00 4C 00 ...             <- 心跳帧，无电量，须排除
+    用偏移 6/7 的 04 01 标记“带电量帧”，并校验 0C 4D 帧头防止误匹配。
+    用户反馈当前电量约 100%，与偏移 5 的 0x64 相符；仍属实验性解析。
+    """
+    if not rep or len(rep) < 8:
+        return None
+    if rep[0] != 0x0C or rep[1] != 0x4D:
+        return None
+    if rep[6] != 0x04 or rep[7] != 0x01:
+        return None
+    level = rep[5]
+    return level if 0 <= level <= 100 else None
+
+
+def read_aimouse(spec: Spec, ifaces: list[HidInterface],
+                 fast: bool = False) -> Optional[Reading]:
+    """Monster AiMouse 0xFF91 私有口主动上报（实验性，待更多真机验证）。"""
+    cand = select(ifaces, 0xFF91, min_input=33)
+    if not cand:
+        return None
+    d = cand[0]
+    try:
+        with HidDevice(d.path, write=False) as dev:
+            # 电量帧约每 2.5 秒才出现一次（心跳帧不带电量），
+            # 窗口太短会漏帧；读不到时上层会回退到 last_state 缓存。
+            end = time.monotonic() + (1.5 if fast else 3.2)
+            while time.monotonic() < end:
+                rep = dev.read_input(timeout_ms=150)
+                level = parse_aimouse_report(rep or b"")
+                if level is None:
+                    continue
+                return _reading(ifaces, level, "Monster AiMouse 0xFF91（实验）",
+                                f"电量字节={level} · 报文 {rep[:10].hex(' ')}",
+                                bytes(rep))
+    except HidError:
+        return None
+    return None
 
 
 def read_atk1(spec: Spec, ifaces: list[HidInterface]) -> Optional[Reading]:
@@ -973,6 +1020,7 @@ def read_standard(ifaces: list[HidInterface]) -> Optional[Reading]:
 READERS: dict[str, Callable[[Spec, list[HidInterface]], Optional[Reading]]] = {
     "eweadn": read_eweadn,
     "pmo": read_pmo,
+    "aimouse": read_aimouse,
     "atk1": read_atk1,
     "atk2": read_atk2,
     "mchose_v9": read_mchose_v9,
@@ -1009,7 +1057,7 @@ def _scan_group(key: tuple[int, int], group: list[HidInterface],
         if not spec.matches(group):
             continue
         try:
-            if spec.kind in ("eweadn", "pmo"):
+            if spec.kind in ("eweadn", "pmo", "aimouse"):
                 r = READERS[spec.kind](spec, group, fast=fast)
             else:
                 r = READERS[spec.kind](spec, group)

@@ -116,6 +116,8 @@ def _short_source(source: str) -> str:
         return "罗技 HID++"
     if "EWEADN" in source:
         return "EWEADN"
+    if "AiMouse" in source or "Monster" in source:
+        return "Monster AiMouse"
     if "PMO" in source or "RDR" in source:
         return "PMO RDR"
     if "MCHOSE" in source:

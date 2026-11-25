@@ -110,6 +110,41 @@ class TestMatching(unittest.TestCase):
         self.assertTrue(any(s.kind == "atk1" and s.matches(group)
                             for s in gp.SPECS))
 
+    def test_aimouse_matches(self):
+        group = [iface(vid=0x248A, pid=0x60AB, usage_page=0xFF91,
+                       input_len=33, output_len=33)]
+        self.assertTrue(any(s.kind == "aimouse" and s.matches(group)
+                            for s in gp.SPECS))
+        self.assertFalse(any(s.kind == "aimouse" and s.matches([iface()])
+                             for s in gp.SPECS))
+
+
+class TestAimouse(unittest.TestCase):
+    """Monster AiMouse 0xFF91 主动上报帧（本机实测样本）。"""
+
+    def test_level_frames(self):
+        for raw in ("0c 4d 06 69 00 64 04 01 00 4c",
+                    "0c 4d 05 69 00 64 04 01 00 4c"):
+            self.assertEqual(gp.parse_aimouse_report(bytes.fromhex(raw)), 100)
+
+    def test_heartbeat_frame_excluded(self):
+        # 心跳帧偏移 5 是 0x4C，不带电量，必须排除（否则会误报 76%）
+        raw = "0c 4d 05 67 00 4c 00 00 00 00"
+        self.assertIsNone(gp.parse_aimouse_report(bytes.fromhex(raw)))
+
+    def test_invalid_frames(self):
+        self.assertIsNone(gp.parse_aimouse_report(b""))
+        self.assertIsNone(gp.parse_aimouse_report(bytes.fromhex(
+            "0c 4d 05 69 00 64 04 01")[:6]))
+        self.assertIsNone(gp.parse_aimouse_report(bytes.fromhex(
+            "ff ff 05 69 00 64 04 01 00 4c")))
+        self.assertIsNone(gp.parse_aimouse_report(bytes.fromhex(
+            "0c 4d 05 69 00 65 04 01 00 4c")))  # >100
+
+    def test_level_boundaries(self):
+        self.assertEqual(gp.parse_aimouse_report(bytes.fromhex(
+            "0c 4d 05 69 00 00 04 01 00 4c")), 0)
+
 
 if __name__ == "__main__":
     unittest.main()
