@@ -222,7 +222,9 @@ class DeviceCard(tk.Frame):
         self.sub_label.configure(
             text=f"{snap.key} · {snap.source or '等待设备'}")
         if snap.present:
-            if snap.charging is True:
+            if snap.no_battery_proto:
+                state, color = "在线 · 无电量协议", themed(FAINT)
+            elif snap.charging is True:
                 state, color = "充电中", themed(GREEN)
             elif snap.status == "full":
                 state, color = "已充满", themed(GREEN)
@@ -251,7 +253,8 @@ class DeviceCard(tk.Frame):
                                    fill=color if not snap.stale
                                    else themed("#5d6675"))
         self.hint.configure(
-            text=("缓存值 · 设备唤醒后自动更新" if snap.stale else
+            text=("设备在线，当前协议不提供电量读数" if snap.no_battery_proto else
+                  "缓存值 · 设备唤醒后自动更新" if snap.stale else
                   "只读查询 · 不修改设备设置" if snap.present else
                   "设备暂时不在线"))
         self.info_values["连接"].configure(text=snap.link or "—")
@@ -259,7 +262,9 @@ class DeviceCard(tk.Frame):
         self.info_values["电压"].configure(
             text=f"{snap.voltage_mv / 1000:.3f} V" if snap.voltage_mv else "—")
         self.info_values["数据源"].configure(text=snap.source or "—")
-        self.time_label.configure(text=snap.updated_text)
+        self.time_label.configure(
+            text=("设备在线 · 暂无电量读数" if snap.no_battery_proto
+                  else snap.updated_text))
 
 
 # --------------------------------------------------------------------------

@@ -152,6 +152,77 @@ class TestRegistry(unittest.TestCase):
         self.assertTrue(s.updated_text.startswith("缓存于"))
         self.assertEqual(s.subtitle, "3554:F517 · 上次缓存")
 
+    def test_online_without_battery_protocol(self):
+        # HID 在线但 scan 读不到电量：不能误报为“未连接”
+        class FakeIface:
+            def __init__(self, vid, pid):
+                self.vid = vid
+                self.pid = pid
+
+        cfg = {"devices": {}}
+
+        def load():
+            return copy.deepcopy(cfg)
+
+        def save(value):
+            cfg.clear()
+            cfg.update(copy.deepcopy(value))
+
+        ifaces = [FakeIface(0x1EA7, 0x0064), FakeIface(0x1A2C, 0x7FFF)]
+        with patch.object(dr.tc, "load_config", side_effect=load), \
+                patch.object(dr.tc, "save_config", side_effect=save), \
+                patch.object(dr.hid_win, "enumerate_hid",
+                             return_value=ifaces), \
+                patch.object(dr.gp, "scan", return_value=[]), \
+                patch.object(dr.last_state, "get", return_value=None):
+            snaps = dr.snapshot()
+
+        mouse = [s for s in snaps if s.key == "1EA7:0064"][0]
+        self.assertTrue(mouse.present)
+        self.assertTrue(mouse.no_battery_proto)
+        self.assertIsNone(mouse.percent)
+        self.assertEqual(mouse.status, "在线 · 无电量协议")
+        self.assertEqual(mouse.link, "2.4G")
+        self.assertFalse(mouse.stale)
+
+        kb = [s for s in snaps if s.key == "1A2C:7FFF"][0]
+        self.assertTrue(kb.present)
+        self.assertTrue(kb.no_battery_proto)
+        self.assertEqual(kb.kind, "keyboard")
+
+        # 没在 HID 枚举里出现的设备仍保持“未连接”
+        other = [s for s in snaps if s.key == "3554:F517"][0]
+        self.assertFalse(other.present)
+        self.assertFalse(other.no_battery_proto)
+        self.assertEqual(other.status, "未连接")
+
+    def test_online_check_uses_canonical_key_for_wave75(self):
+        # WAVE75 实际在线 PID 可能是 3009，不能按 _ids 的 3002 精确匹配误判离线
+        class FakeIface:
+            def __init__(self, vid, pid):
+                self.vid = vid
+                self.pid = pid
+
+        cfg = {"devices": {}}
+
+        def load():
+            return copy.deepcopy(cfg)
+
+        def save(value):
+            cfg.clear()
+            cfg.update(copy.deepcopy(value))
+
+        with patch.object(dr.tc, "load_config", side_effect=load), \
+                patch.object(dr.tc, "save_config", side_effect=save), \
+                patch.object(dr.hid_win, "enumerate_hid",
+                             return_value=[FakeIface(0x36B0, 0x3009)]), \
+                patch.object(dr.gp, "scan", return_value=[]), \
+                patch.object(dr.last_state, "get", return_value=None):
+            snaps = dr.snapshot()
+        wave = [s for s in snaps if s.key == "36B0:WAVE75"][0]
+        self.assertTrue(wave.present)
+        self.assertTrue(wave.no_battery_proto)
+
 
 if __name__ == "__main__":
     unittest.main()

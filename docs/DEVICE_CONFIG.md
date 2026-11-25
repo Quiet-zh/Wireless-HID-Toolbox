@@ -63,8 +63,9 @@ PID `0x60AB`，旧显示名 Monster AiMouse）。它已登记在设备目录里�
 PID `0x0064`），`1A2C:7FFF` 是狼蛛 S99 三模键盘（VID `0x1A2C` China Resource
 Semico Co., Ltd / PID `0x7FFF`，产品名 `2.4G Wireless Device`，2.4G 连接）。
 两台设备已登记到设备目录，面板、托盘和鼠标键盘测试面板都能按名称和类型识别；
-但尚未收录私有电量协议，当前只显示占位卡片、不显示百分比。如果设备暴露标准
-Battery Strength Usage，`generic_protocols.py` 的 `read_standard()` 会自动读到；
+但尚未收录私有电量协议，HID 在线时显示「在线 · 无电量协议」和 `--`，不再误报
+「未连接」。如果设备暴露标准 Battery Strength Usage，`generic_protocols.py`
+的 `read_standard()` 会自动读到；
 否则需要在官方驱动开启时用 HID 调试台抓包，把报文偏移写入 `captured.json`
 或新增协议读取函数后再显示电量。加入 `SPECS` 之前不会尝试读取这两台设备。
 

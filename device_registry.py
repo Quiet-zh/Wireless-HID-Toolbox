@@ -14,6 +14,7 @@ from typing import Optional
 
 import device_lock
 import generic_protocols as gp
+import hid_win
 import last_state
 import tray_common as tc
 
@@ -72,6 +73,7 @@ class DeviceSnapshot:
     show: bool = True
     tray: bool = True
     kind: str = "mouse"
+    no_battery_proto: bool = False  # HID 在线，但没有能读到电量的协议
 
     @property
     def charging_text(self) -> str:
@@ -203,11 +205,20 @@ def snapshot(fast: bool = False) -> list[DeviceSnapshot]:
     changed = False
 
     readings: list[gp.Reading] = []
+    ifaces: list = []
     try:
         with device_lock.scan_lock(timeout_ms=100 if fast else 400):
-            readings = gp.scan(fast=fast)
+            # 只枚举一次 HID：scan 与在线判断共用，省掉一整轮系统调用
+            ifaces = hid_win.enumerate_hid()
+            readings = gp.scan(ifaces=ifaces, fast=fast)
     except Exception:
         readings = []
+        ifaces = []
+    # 用 canonical_key 归一，兼容 36B0 的 3002/3009 等多个 PID
+    present_keys = {
+        canonical_key(f"{v:04X}:{p:04X}", v, p)
+        for v, p in gp.groups(ifaces)
+    }
 
     by_key: dict[str, gp.Reading] = {}
     for r in readings:
@@ -261,6 +272,18 @@ def snapshot(fast: bool = False) -> list[DeviceSnapshot]:
                 link="—", detail=last.get("detail", ""),
                 updated=float(last["ts"]), stale=True, present=False,
                 show=show, tray=tray, kind=kind))
+            continue
+
+        if key in present_keys:
+            # HID 物理在线，只是没有能读到电量的协议：不能误报为“未连接”
+            vid, pid = _ids(key)
+            out.append(DeviceSnapshot(
+                key=key, name=name, vid=vid, pid=pid, percent=None,
+                charging=None, status="在线 · 无电量协议",
+                source="HID 在线", link=_link_for(key, "", "", ""),
+                detail="HID 接口在线，暂无电量读取协议",
+                updated=time.time(), stale=False, present=True,
+                show=show, tray=tray, kind=kind, no_battery_proto=True))
             continue
 
         vid, pid = _ids(key)

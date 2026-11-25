@@ -1,6 +1,6 @@
 # Wireless HID Toolbox（2.4G 外设工具箱）
 
-当前版本：**v1.8.0**（更新记录见 [CHANGELOG.md](CHANGELOG.md)）
+当前版本：**v1.8.1**（更新记录见 [CHANGELOG.md](CHANGELOG.md)）
 
 Windows 10/11 的 2.4G 无线外设电量与 HID 调试工具箱。纯 Python 标准库 +
 `ctypes` + `tkinter`，运行时不依赖任何第三方库。
@@ -71,9 +71,10 @@ Windows 10/11 的 2.4G 无线外设电量与 HID 调试工具箱。纯 Python �
 > 英菲克 F15 无线鼠标（`1EA7:0064`，VID `0x1EA7` SHARKOON / PID `0x0064`）与
 > 狼蛛 S99 三模键盘（`1A2C:7FFF`，VID `0x1A2C` China Resource Semico /
 > PID `0x7FFF`，产品名 `2.4G Wireless Device`）已登记到设备目录，面板、托盘和
-> 测试面板都能按名称/类型识别。两者尚未收录私有电量协议，当前只显示占位卡片、
-> 不显示百分比；若设备暴露标准 Battery Strength Usage 会自动读到，否则需抓包
-> 确认报文后写入 `captured.json` 或新增协议读取函数（见「设备配置」）。
+> 测试面板都能按名称/类型识别。两者尚未收录私有电量协议，HID 在线时卡片显示
+> 「在线 · 无电量协议」和 `--`（不会误报「未连接」）；若设备暴露标准
+> Battery Strength Usage 会自动读到，否则需抓包确认报文后写入 `captured.json`
+> 或新增协议读取函数（见「设备配置」）。
 >
 > EWEADN、PMO、罗技 G304、魔声 AI 垂直鼠标 在本机实测；其他协议来自公开协议文档/仓库的移植，
 > 已做单元测试，但建议接上设备后用 `generic_scan.py --list` / `--scan` 验证。
