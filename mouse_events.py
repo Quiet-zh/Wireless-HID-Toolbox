@@ -288,7 +288,7 @@ def list_test_devices() -> list[dict]:
         "36B0:3002": "PMO WAVE75",
         "36B0:3009": "PMO WAVE75（USB）",
         "046D:C53F": "罗技 G304 / Lightspeed",
-        "248A:60AB": "Monster AiMouse",
+        "248A:60AB": "魔声 AI 垂直鼠标",
         "2F4C:1006": "COLORFUL 键盘",
         "1EA7:0064": "英菲克 F15 无线鼠标",
         "1A2C:7FFF": "狼蛛 S99 三模键盘",

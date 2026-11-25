@@ -313,7 +313,7 @@ SPECS: list[Spec] = [
          usage_page=0xFF02, min_output=17, priority=5),
     Spec("PMO WAVE75（本机键盘）", "pmo", 0x36B0, (0x3002, 0x3009),
          usage_page=0xFF60, priority=5),
-    Spec("Monster AiMouse（本机鼠标）", "aimouse", 0x248A, (0x60AB,),
+    Spec("魔声 AI 垂直鼠标（本机鼠标）", "aimouse", 0x248A, (0x60AB,),
          usage_page=0xFF91, min_input=33, priority=5),
 
     # ---- ATK / VXE / VGN ----
@@ -454,7 +454,7 @@ def read_pmo(spec: Spec, ifaces: list[HidInterface],
 
 
 def parse_aimouse_report(rep: bytes) -> Optional[int]:
-    """解析 Monster AiMouse 的 0xFF91 主动上报帧，取电量百分比。
+    """解析魔声 AI 垂直鼠标的 0xFF91 主动上报帧，取电量百分比。
 
     本机实测帧（2026-11-25，共 3 种，约 0.8 帧/秒）：
         0C 4D 06 69 00 64 04 01 00 4C ...   <- 电量帧，偏移 5 = 100
@@ -475,7 +475,7 @@ def parse_aimouse_report(rep: bytes) -> Optional[int]:
 
 def read_aimouse(spec: Spec, ifaces: list[HidInterface],
                  fast: bool = False) -> Optional[Reading]:
-    """Monster AiMouse 0xFF91 私有口主动上报（实验性，待更多真机验证）。"""
+    """魔声 AI 垂直鼠标 0xFF91 私有口主动上报（实验性，待更多真机验证）。"""
     cand = select(ifaces, 0xFF91, min_input=33)
     if not cand:
         return None
@@ -490,7 +490,7 @@ def read_aimouse(spec: Spec, ifaces: list[HidInterface],
                 level = parse_aimouse_report(rep or b"")
                 if level is None:
                     continue
-                return _reading(ifaces, level, "Monster AiMouse 0xFF91（实验）",
+                return _reading(ifaces, level, "魔声 AI 垂直鼠标 0xFF91（实验）",
                                 f"电量字节={level} · 报文 {rep[:10].hex(' ')}",
                                 bytes(rep))
     except HidError:

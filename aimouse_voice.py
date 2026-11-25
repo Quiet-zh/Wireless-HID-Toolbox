@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""aimouse_voice.py —— Monster AiMouse 0xFF91 私有口的 ADPCM 语音解码。
+"""aimouse_voice.py —— 魔声 AI 垂直鼠标 0xFF91 私有口的 ADPCM 语音解码。
 
 从 2.4G 鼠标接收器回传的 33 字节 HID 帧中还原 16kHz / 16bit 单声道语音。
 

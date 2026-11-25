@@ -20,11 +20,17 @@ import tray_common as tc
 PRIMARY = {
     "3554:F517": {"name": "EWEADN 8K", "order": 10, "kind": "mouse"},
     "36B0:WAVE75": {"name": "PMO WAVE75", "order": 20, "kind": "keyboard"},
-    "248A:60AB": {"name": "Monster AiMouse", "order": 25, "kind": "mouse"},
+    "248A:60AB": {"name": "魔声 AI 垂直鼠标",
+                  "order": 25, "kind": "mouse"},
     "1EA7:0064": {"name": "英菲克 F15 无线鼠标",
                   "order": 30, "kind": "mouse"},
     "1A2C:7FFF": {"name": "狼蛛 S99 三模键盘",
                   "order": 40, "kind": "keyboard"},
+}
+
+# 旧显示名 → 新显示名：已有配置里仍叫旧名字时，_ensure() 自动迁移
+NAME_RENAMES = {
+    "Monster AiMouse": "魔声 AI 垂直鼠标",
 }
 
 DEVICE_KINDS = ("mouse", "keyboard")
@@ -38,7 +44,7 @@ def infer_kind(key: str, name: str = "") -> str:
         return "keyboard"
     if key in ("3554:F517", "046D:C53F", "248A:60AB", "1EA7:0064") \
             or "mouse" in text or "aimouse" in text or "monster" in text \
-            or "鼠标" in text:
+            or "魔声" in text or "垂直" in text or "鼠标" in text:
         return "mouse"
     return "mouse"
 
@@ -121,8 +127,8 @@ def _short_source(source: str) -> str:
         return "罗技 HID++"
     if "EWEADN" in source:
         return "EWEADN"
-    if "AiMouse" in source or "Monster" in source:
-        return "Monster AiMouse"
+    if "魔声" in source or "AiMouse" in source or "Monster" in source:
+        return "魔声 AI 垂直鼠标"
     if "PMO" in source or "RDR" in source:
         return "PMO RDR"
     if "MCHOSE" in source:
@@ -167,6 +173,10 @@ def _ensure(cfg: dict) -> dict:
     for key, meta in devs.items():
         if not isinstance(meta, dict):
             continue
+        name = meta.get("name")
+        if isinstance(name, str) and name in NAME_RENAMES:
+            meta["name"] = NAME_RENAMES[name]
+            changed = True
         if not meta.get("kind"):
             meta["kind"] = infer_kind(key, meta.get("name", ""))
             changed = True

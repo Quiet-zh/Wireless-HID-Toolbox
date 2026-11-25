@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""aimouse_voice_capture.py —— 从 Monster AiMouse 抓取语音并解码保存。
+"""aimouse_voice_capture.py —— 从 魔声 AI 垂直鼠标 抓取语音并解码保存。
 
 监听 `0xFF91` 私有口：长按语音键时接收 ADPCM 帧，松开后自动解码成 WAV。
 
@@ -81,7 +81,7 @@ def capture(seconds: float, gap: float = GAP_SECONDS,
 
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(
-        description="从 Monster AiMouse 0xFF91 抓取语音并解码为 WAV")
+        description="从 魔声 AI 垂直鼠标 0xFF91 抓取语音并解码为 WAV")
     parser.add_argument("--seconds", type=float, default=30,
                         help="监听时长（秒），默认 30")
     parser.add_argument("--out", default="aimouse_voice.wav",

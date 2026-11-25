@@ -587,7 +587,7 @@ class BatteryPanel(tk.Tk):
 
     # ------------------------------------------------------------- 设置
     def _open_voice_window(self):
-        """打开 Monster AiMouse 语音窗口（单实例复用）。"""
+        """打开魔声 AI 垂直鼠标语音窗口（单实例复用）。"""
         import aimouse_voice_panel as avp
         win = getattr(self, "_voice_win", None)
         if win is not None:

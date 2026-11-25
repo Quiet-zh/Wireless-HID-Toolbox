@@ -36,18 +36,44 @@ class TestRegistry(unittest.TestCase):
         self.assertEqual(dr.kind_label("keyboard"), "键盘")
 
     def test_aimouse_registered(self):
-        # Monster AiMouse（248A:60AB）为本机 2.4G 鼠标，已登记到设备目录
+        # 魔声 AI 垂直鼠标（248A:60AB）为本机 2.4G 鼠标，已登记到设备目录
         self.assertIn("248A:60AB", dr.PRIMARY)
         meta = dr.PRIMARY["248A:60AB"]
-        self.assertEqual(meta["name"], "Monster AiMouse")
+        self.assertEqual(meta["name"], "魔声 AI 垂直鼠标")
         self.assertEqual(meta["kind"], "mouse")
         self.assertEqual(dr.canonical_key("248A:60AB", 0x248A, 0x60AB),
                          "248A:60AB")
         self.assertEqual(dr._ids("248A:60AB"), (0x248A, 0x60AB))
         self.assertEqual(dr.friendly_name("248A:60AB", "AiMouse"),
-                         "Monster AiMouse")
-        self.assertEqual(dr.infer_kind("248A:60AB", "Monster AiMouse"),
+                         "魔声 AI 垂直鼠标")
+        self.assertEqual(dr.infer_kind("248A:60AB", "魔声 AI 垂直鼠标"),
                          "mouse")
+        # 不依赖已知 key，靠“魔声/垂直”中文关键字也能判为鼠标
+        self.assertEqual(dr.infer_kind("9999:8888", "魔声 AI 垂直鼠标"),
+                         "mouse")
+
+    def test_old_aimouse_name_migrates(self):
+        # 已有配置里仍叫旧名字时，_ensure() 自动迁移为新名字
+        cfg = {"devices": {
+            "248A:60AB": {"name": "Monster AiMouse", "show": True,
+                          "tray": True, "order": 25, "kind": "mouse"},
+        }}
+
+        def load():
+            return copy.deepcopy(cfg)
+
+        def save(value):
+            cfg.clear()
+            cfg.update(copy.deepcopy(value))
+
+        with patch.object(dr.tc, "load_config", side_effect=load), \
+                patch.object(dr.tc, "save_config", side_effect=save):
+            rows = dr.known_devices()
+        row = [d for d in rows if d["key"] == "248A:60AB"][0]
+        self.assertEqual(row["name"], "魔声 AI 垂直鼠标")
+        # 旧缓存的 source 文本也会缩短成新名字
+        self.assertEqual(dr._short_source("Monster AiMouse 0xFF91（实验）"),
+                         "魔声 AI 垂直鼠标")
 
     def test_infike_f15_registered(self):
         # 英菲克 F15 无线鼠标（1EA7:0064）为本机 2.4G 鼠标，仅登记

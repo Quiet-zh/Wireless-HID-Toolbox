@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
-"""aimouse_voice_panel.py —— Monster AiMouse 语音窗口。
+"""aimouse_voice_panel.py —— 魔声 AI 垂直鼠标 语音窗口。
 
-主界面「Monster AiMouse」卡片上的「语音」按钮打开本窗口：
+主界面「魔声 AI 垂直鼠标」卡片上的「语音」按钮打开本窗口：
 
 * **开始监测 / 结束监测**：长按鼠标语音键开始录制，松开自动保存一条音频
 * **录音列表**：点击选中，可播放 / 停止 / 删除 / 转文字
@@ -260,7 +260,7 @@ class VoiceSettingsDialog(tk.Toplevel):
 
     def __init__(self, parent, cfg: dict, on_save):
         super().__init__(parent)
-        self.title("语音设置 · Monster AiMouse")
+        self.title("语音设置 · 魔声 AI 垂直鼠标")
         self.configure(bg=themed(BG))
         self.cfg = dict(cfg)
         self.on_save = on_save
@@ -411,7 +411,7 @@ class VoiceSettingsDialog(tk.Toplevel):
 class VoiceWindow(tk.Toplevel):
     def __init__(self, parent, on_close=None):
         super().__init__(parent)
-        self.title("Monster AiMouse · 语音")
+        self.title("魔声 AI 垂直鼠标 · 语音")
         self.configure(bg=themed(BG))
         self.geometry("980x660")
         self.minsize(860, 560)

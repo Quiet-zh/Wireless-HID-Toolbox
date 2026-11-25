@@ -120,7 +120,7 @@ class TestMatching(unittest.TestCase):
 
 
 class TestAimouse(unittest.TestCase):
-    """Monster AiMouse 0xFF91 主动上报帧（本机实测样本）。"""
+    """魔声 AI 垂直鼠标 0xFF91 主动上报帧（本机实测样本）。"""
 
     def test_level_frames(self):
         for raw in ("0c 4d 06 69 00 64 04 01 00 4c",
