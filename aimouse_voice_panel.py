@@ -702,7 +702,7 @@ class VoiceWindow(tk.Toplevel):
             self.status.configure(text="没录到音频（%s）" % (reason or "无数据"),
                                   fg=themed(AMBER))
             return
-        samples = av.decode_frames(frames)
+        samples = av.decode_frames_local(frames)
         cutoff = int(self.cfg.get("highpass", 0) or 0)
         if cutoff > 0:
             samples = av.highpass(samples, cutoff=cutoff)
@@ -848,7 +848,8 @@ class VoiceWindow(tk.Toplevel):
             return ["clipboard"] if allow_clipboard else []
         if mode == 3:
             return ["cloud"]
-        chain = ["cloud", "vosk"]
+        # 本地优先：Vosk 可用时完全不联网、不读剪贴板
+        chain = ["vosk", "cloud"]
         if allow_clipboard:
             chain.append("clipboard")
         return chain

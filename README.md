@@ -1,6 +1,6 @@
 # Wireless HID Toolbox（2.4G 外设工具箱）
 
-当前版本：**v1.9.3**（更新记录见 [CHANGELOG.md](CHANGELOG.md)）
+当前版本：**v1.10.0**（更新记录见 [CHANGELOG.md](CHANGELOG.md)）
 
 Windows 10/11 的 2.4G 无线外设电量与 HID 调试工具箱。纯 Python 标准库 +
 `ctypes` + `tkinter`，运行时不依赖任何第三方库。
@@ -10,8 +10,9 @@ Windows 10/11 的 2.4G 无线外设电量与 HID 调试工具箱。纯 Python �
   并通过 `0xFF91` 私有口读取电量（实验性解析，见「支持的设备与协议」）；
   英菲克 F15 无线鼠标（`1EA7:0064`）与狼蛛 S99 三模键盘（`1A2C:7FFF`）
   也已登记，当前只显示占位、不显示电量
-- **语音解码**：魔声 AI 垂直鼠标长按语音键时，`0xFF91` 会回传 ADPCM 语音，
-  `aimouse_voice.py` 可还原成 16kHz WAV（见「语音解码」）
+- **语音解码（纯本地）**：魔声 AI 垂直鼠标长按语音键时，`0xFF91` 回传加扰 ADPCM，
+  `aimouse_voice.decode_frames_local()` 可完全本地还原成 16kHz WAV，
+  不需要云端、官方驱动或剪贴板（见「语音解码」）
 - **语音窗口**：魔声 AI 垂直鼠标卡片上的「🎤 语音」按钮，支持监测录音、列表播放/删除、
   实时转文字与参数设置（见「语音窗口」）
 - **转文字兜底**：自动按「云端 ASR → Vosk → 剪贴板桥接」降级，
@@ -211,39 +212,48 @@ python mouse_test_gui.py --demo
 
 ![键盘全配列测试](docs/keyboard_test.png)
 
-## 语音解码（魔声 AI 垂直鼠标）
+## 语音解码（魔声 AI 垂直鼠标）· 纯本地
 
-`0xFF91` 私有口除了电量，还会在长按语音键时回传 **IMA ADPCM 压缩语音**。
-`aimouse_voice.py` 可把它还原成 16kHz / 16bit 单声道 WAV：
+`0xFF91` 私有口除了电量，还会在长按语音键时回传**加扰的 IMA ADPCM 压缩语音**。
+`aimouse_voice.py` 可**完全本地**还原成 16kHz / 16bit 单声道 WAV ——
+不需要云端 ASR、不需要官方驱动运行、不需要读剪贴板：
 
 ```python
 import aimouse_voice as av
 
-frames = [...]                        # 从 0xFF91 读到的 33 字节帧
-samples = av.decode_frames(frames)    # -> 16bit 样本
+frames = [...]                              # 从 0xFF91 读到的 33 字节帧
+samples = av.decode_frames_local(frames)    # XOR 还原 + 跨帧连续 IMA
 av.save_wav("voice.wav", av.normalize(samples))
 ```
 
-帧结构（反汇编 `AiMouse.exe` 0x4E6890 处的解码函数确认）：
+帧结构（反汇编 `AiMouse.exe` 0x4E6890 + Frida 逐帧配对确认）：
 
 | 偏移 | 内容 |
 | --- | --- |
 | `[0]` | `0x1B` 帧标识 |
-| `[1:3]` | predictor，int16 小端（每帧重置） |
-| `[3]` | step_index，0–88（越界截断） |
+| `[1:4]` | **设备侧状态**，不是解码器状态（不参与解码） |
 | `[4]` | `0xBE` 保留字节 |
-| `[5:33]` | 28 字节 = 56 个 4-bit nibble，**低 4 位先** |
+| `[5:33]` | 28 字节加扰数据，需先按位置 XOR `av.ADPCM_XOR_MASK` |
 
-每帧 56 样本 @16000Hz = 3.5ms，与实测约 280 帧/秒吻合。
+解码要点（已封装在 `decode_frames_local`）：
+
+1. 每帧 28 字节按位置 XOR 固定 28B 密钥（966 帧配对 100% 恒定）；
+2. `predictor=0 / step_index=0` 起步，**跨帧连续不重置**（实测帧间状态差为 0）；
+3. 标准 IMA，**低 4 位先**，每帧 56 样本。
+
+端到端实测（1528 帧 / 5.35s）：RMS **8694**、相邻差中位 **521**、饱和 **0.6%**，
+与官方解码 PCM 一致；Vosk 离线可识别出「语音输入…」。
+完整逆向过程见 [AiMouse 语音链路逆向笔记](docs/AiMouse-RE-Notes.md)。
+
+> `decode_frame()` / `decode_frames()` 保留为未加扰流的旧实现（每帧独立重置），
+> 真实设备请用 `decode_frames_local()`。
 
 **降噪建议**：4-bit ADPCM 量化噪声接近白噪声，理论 SNR 约 20dB。
+用 `decode_frames_local()` 还原后波形已与官方一致，通常只需
+`av.highpass()` 轻度高通，**不要重度降噪** —— 谱减产生的"音乐噪声"
+是非自然伪影，反而更容易让语音识别出错。
 
-- **人耳试听**：可用 `noisereduce`（可选依赖，不在运行时依赖内）做谱减，
-  `prop_decrease≈0.75` 在"沙沙"与"回音"之间较平衡
-- **送 ASR 转文字**：建议只用 `av.highpass()` 轻度高通，**不要重度降噪** ——
-  谱减产生的"音乐噪声"是非自然伪影，反而更容易让语音识别出错
-
-> 官方驱动的做法正是把 ADPCM 原样发往云端 ASR、不做本地降噪，原因就在这里。
+> 官方驱动的解码器也不做本地降噪，直接把 PCM 发往云端 ASR，原因就在这里。
 
 ## 语音窗口（魔声 AI 垂直鼠标 卡片）
 
@@ -266,12 +276,12 @@ av.save_wav("voice.wav", av.normalize(samples))
 | `max_seconds` | 单次最长录制（秒） | 30 |
 | `save_dir` | 音频保存目录 | `%APPDATA%\ExtBatteryTray\voice` |
 | `model_dir` | Vosk 中文模型目录 | `…\models\vosk-model-small-cn-0.22` |
-| `asr_backend` | 识别后端：0 自动 / 1 Vosk / 2 剪贴板 / 3 云端 | 0 |
+| `asr_backend` | 识别后端：0 自动（本地优先）/ 1 Vosk / 2 剪贴板 / 3 云端 | 0 |
 
 ### 识别后端（自动降级）
 
 窗口按设置里的 `asr_backend` 选择后端；默认「0 自动」按
-**云端 ASR → Vosk → 剪贴板桥接** 依次尝试，任一环节出结果即停止：
+**Vosk（本地）→ 云端 ASR → 剪贴板桥接** 依次尝试（本地优先，Vosk 可用时完全不联网），任一环节出结果即停止：
 
 | 后端 | 依赖 | 说明 |
 | --- | --- | --- |
@@ -377,7 +387,7 @@ python tray_app.py --quit
 python -m unittest discover -s tests -v
 ```
 
-共 **99** 个用例：
+共 **108** 个用例：
 
 - 8 个鼠标协议/电压曲线
 - 5 个 Raw Input 事件解析
@@ -387,6 +397,7 @@ python -m unittest discover -s tests -v
 - 16 个魔声 AI 垂直鼠标语音解码/分段/WAV 输出
 - 6 个语音窗口参数与配置读写
 - 21 个云端 ASR 帧构造/响应解析/后端选择
+- 9 个纯本地解码（XOR 密钥/连续 IMA/真实帧回归）
 - 8 个设备目录/类型/删除恢复
 - 3 个 104 键布局数据
 - 4 个配置默认值/合并/主题回退

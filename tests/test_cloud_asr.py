@@ -111,9 +111,9 @@ class TestBackendSettings(unittest.TestCase):
     def test_backend_chain_modes(self):
         win = vp.VoiceWindow.__new__(vp.VoiceWindow)
         win.cfg = {"asr_backend": 0}
-        self.assertEqual(win._backend_chain(False), ["cloud", "vosk"])
+        self.assertEqual(win._backend_chain(False), ["vosk", "cloud"])
         self.assertEqual(win._backend_chain(True),
-                         ["cloud", "vosk", "clipboard"])
+                         ["vosk", "cloud", "clipboard"])
         win.cfg = {"asr_backend": 1}
         self.assertEqual(win._backend_chain(False), ["vosk"])
         win.cfg = {"asr_backend": 2}

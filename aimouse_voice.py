@@ -6,14 +6,19 @@
 帧结构（实测 + 反汇编 AiMouse.exe 0x4E6890 处的解码函数确认）::
 
     [0]      0x1B        帧标识
-    [1:3]    predictor   int16 小端，本帧解码起点
-    [3]      step_index  0..88（越界按 0/88 截断）
+    [1:3]    设备侧状态  不是解码器的 predictor（勿直接用于解码）
+    [3]      设备侧状态
     [4]      0xBE        保留字节
-    [5:33]   ADPCM 数据  28 字节 = 56 个 4-bit 样本（低 4 位先）
+    [5:33]   加扰数据    28 字节，需先 XOR ADPCM_XOR_MASK 才是 IMA ADPCM
 
 每帧 56 样本 @16000Hz = 3.5ms，与实测帧率（约 280 帧/秒）一致。
 
-只读解析，不写设备。纯标准库实现，不引入第三方依赖。
+**真实语音请用 :func:`decode_frames_local`**：先按位置异或还原 28 字节，
+再以跨帧连续的 predictor/step_index 做标准 IMA 解码（低 4 位先）。
+该函数完全本地、零第三方依赖，不需要云端 ASR、官方驱动或剪贴板。
+:func:`decode_frame` / :func:`decode_frames` 保留为未加扰流的旧实现。
+
+只读解析，不写设备。
 """
 from __future__ import annotations
 
@@ -41,6 +46,17 @@ AUDIO_OFFSET = 5         # ADPCM 数据起点
 SAMPLES_PER_FRAME = 56   # 28 字节 × 2 个 nibble
 SAMPLE_RATE = 16000
 FRAME_ID = 0x1B
+
+# 设备侧对 ADPCM 数据做的固定加扰密钥（28 字节，按位置 XOR）。
+# 由 Frida 逐帧配对求出：同一次录音里 hid[5+j] XOR decode_buf[4+j]
+# 在 966 帧上 100% 恒定；用该密钥还原后，解码结果与官方输出逐样本零误差。
+# 详见 docs/AiMouse-RE-Notes.md。
+ADPCM_XOR_MASK = bytes((
+    0x0C, 0x90, 0x12, 0x9D, 0x20, 0xA3, 0x6B, 0x41,
+    0xBB, 0x40, 0x68, 0x5A, 0x4B, 0x12, 0xF4, 0x11,
+    0x03, 0x9A, 0x4B, 0x12, 0xF6, 0x11, 0x03, 0x76,
+    0x0A, 0x12, 0xD4, 0x48,
+))
 
 
 def is_audio_frame(frame: bytes) -> bool:
@@ -80,11 +96,56 @@ def decode_frame(frame: bytes) -> list[int]:
 
 
 def decode_frames(frames: Iterable[bytes]) -> list[int]:
-    """连续解码多帧，返回拼接后的样本序列。"""
+    """连续解码多帧，返回拼接后的样本序列。
+
+    注意：这是**旧版「每帧独立重置 predictor」**的实现，用于未加扰的
+    标准 IMA 流或单元测试。真实的魔声 AI 垂直鼠标请用
+    :func:`decode_frames_local`。
+    """
     samples: list[int] = []
     for frame in frames:
         samples.extend(decode_frame(frame))
     return samples
+
+
+def decode_frames_local(frames: Iterable[bytes],
+                        pred0: int = 0, index0: int = 0) -> list[int]:
+    """**纯本地**还原设备语音（不需要云端、官方驱动或剪贴板）。
+
+    与官方驱动 `decode()` 的行为一致（Frida 逐样本验证 40/40 零误差）：
+
+    * 每帧 ``[5:33]`` 的 28 字节先按位置 XOR :data:`ADPCM_XOR_MASK`；
+    * ``predictor`` / ``step_index`` **跨帧连续**，只在整段开始时初始化
+      （默认 0/0；IMA 自适应会迅速收敛，实测不影响识别）；
+    * 帧头 ``[1:4]`` 是设备侧状态，**不参与**解码。
+
+    返回 16bit 样本列表，每帧 56 个。非法帧跳过。
+    """
+    pred = pred0
+    index = max(0, min(88, index0))
+    out: list[int] = []
+    for frame in frames:
+        if not is_audio_frame(frame):
+            continue
+        for pos, raw in enumerate(frame[AUDIO_OFFSET:FRAME_SIZE]):
+            byte = raw ^ ADPCM_XOR_MASK[pos]
+            for nib in (byte & 0x0F, (byte >> 4) & 0x0F):
+                step = STEP_TABLE[index]
+                diff = step >> 3
+                if nib & 4:
+                    diff += step
+                if nib & 2:
+                    diff += step >> 1
+                if nib & 1:
+                    diff += step >> 2
+                pred = pred - diff if nib & 8 else pred + diff
+                if pred > 32767:
+                    pred = 32767
+                elif pred < -32768:
+                    pred = -32768
+                index = max(0, min(88, index + INDEX_TABLE[nib]))
+                out.append(pred)
+    return out
 
 
 def split_segments(frames: list[bytes], gap_frames: int = 12) -> list[list[bytes]]:

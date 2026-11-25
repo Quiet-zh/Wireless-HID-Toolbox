@@ -111,7 +111,7 @@ def main(argv=None) -> int:
     base, ext = os.path.splitext(args.out)
     total = 0
     for index, frames in enumerate(audio, 1):
-        samples = av.decode_frames(frames)
+        samples = av.decode_frames_local(frames)
         if args.filter:
             samples = av.highpass(samples, cutoff=150)
         if not args.no_normalize:
