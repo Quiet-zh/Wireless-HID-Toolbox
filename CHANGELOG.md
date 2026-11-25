@@ -7,7 +7,7 @@
 
 | 版本 | 本地提交 | 主题 |
 |---|---|---|
-| 1.5.0 | `待归档` | AiMouse 语音解码（ADPCM） |
+| 1.5.0 | `fbc92dd` | AiMouse 语音解码（ADPCM） |
 | 1.4.0 | `8e594df` | AiMouse 0xFF91 电量协议（实验性） |
 | 1.3.0 | `69eb393`、`15df07e` | 登记 Monster AiMouse 设备 |
 | 1.2.1 | `d61ba3b`、`024dfdf`、`33fca0e` | onefile 默认、测试与文档整理、版本归档 |
@@ -27,7 +27,7 @@
 
 ## 1.5.0 — 2026-11-25
 
-提交：`待归档`
+提交：`fbc92dd`
 
 - 新增 `aimouse_voice.py`：把 `0xFF91` 私有口的 33 字节 ADPCM 帧还原为
   16kHz / 16bit 单声道 WAV
