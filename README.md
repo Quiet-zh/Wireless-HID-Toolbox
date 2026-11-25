@@ -1,6 +1,6 @@
 # Wireless HID Toolbox（2.4G 外设工具箱）
 
-当前版本：**v1.9.0**（更新记录见 [CHANGELOG.md](CHANGELOG.md)）
+当前版本：**v1.9.1**（更新记录见 [CHANGELOG.md](CHANGELOG.md)）
 
 Windows 10/11 的 2.4G 无线外设电量与 HID 调试工具箱。纯 Python 标准库 +
 `ctypes` + `tkinter`，运行时不依赖任何第三方库。
