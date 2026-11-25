@@ -1,6 +1,6 @@
 # Wireless HID Toolbox（2.4G 外设工具箱）
 
-当前版本：**v1.11.0**（更新记录见 [CHANGELOG.md](CHANGELOG.md)）
+当前版本：**v1.12.0**（更新记录见 [CHANGELOG.md](CHANGELOG.md)）
 
 Windows 10/11 的 2.4G 无线外设电量与 HID 调试工具箱。纯 Python 标准库 +
 `ctypes` + `tkinter`，运行时不依赖任何第三方库。
@@ -28,6 +28,7 @@ Windows 10/11 的 2.4G 无线外设电量与 HID 调试工具箱。纯 Python �
 ## 文档导航
 
 - [更新记录](CHANGELOG.md)
+- [能力总览](docs/CAPABILITIES.md)：一页速查全部能力、依赖矩阵、参数表与验证命令
 - [打包说明](docs/PACKAGING.md)：onefile 默认、onedir 选择、产物与排错
 - [主题说明](docs/THEME.md)：白天/黑夜配色与新增颜色约定
 - [测试说明](docs/TESTING.md)：自动化覆盖、GUI 手动验收清单
@@ -277,12 +278,17 @@ av.save_wav("voice.wav", av.normalize(samples))
 | `save_dir` | 音频保存目录 | `%APPDATA%\ExtBatteryTray\voice` |
 | `model_dir` | Vosk 中文模型目录 | `…\models\vosk-model-small-cn-0.22` |
 | `asr_backend` | 识别后端：0 自动（本地优先）/ 1 Vosk / 2 剪贴板 / 3 云端 | 0 |
+| `local_only` | 纯本地模式：1=只用本地 Vosk，完全不联网/不读剪贴板 | **1** |
 | `asr_grammar` | 识别词表（可选），逗号分隔；留空=通用识别 | 空 |
 
 ### 识别后端（自动降级）
 
-窗口按设置里的 `asr_backend` 选择后端；默认「0 自动」按
-**Vosk（本地）→ 云端 ASR → 剪贴板桥接** 依次尝试（本地优先，Vosk 可用时完全不联网），任一环节出结果即停止：
+**默认 `local_only=1`：窗口只走本地 Vosk，完全不联网、不读剪贴板、不依赖官方驱动。**
+窗口顶部绿色徽标会实时显示当前模式（如 `🟢 纯本地解码 · 仅本地 Vosk · 词表限制`），
+实时区域下方还会显示解码方式、识别后端与当前模型名。
+
+把 `local_only` 设为 0 后，按 `asr_backend` 选择后端；「0 自动」按
+**Vosk（本地）→ 云端 ASR → 剪贴板桥接** 依次尝试，任一环节出结果即停止：
 
 | 后端 | 依赖 | 说明 |
 | --- | --- | --- |
@@ -300,6 +306,12 @@ Vosk 会启用 grammar 约束。实测小模型通用识别为「此事 语音 �
 
 ```bat
 python -m pip install vosk websockets
+```
+
+独立验证解码链路（零依赖）：
+
+```bat
+python tools\verify_local_decode.py
 ```
 
 Vosk 中文小模型（约 42MB）解压到 `model_dir`：
@@ -393,7 +405,7 @@ python tray_app.py --quit
 python -m unittest discover -s tests -v
 ```
 
-共 **113** 个用例：
+共 **115** 个用例：
 
 - 8 个鼠标协议/电压曲线
 - 5 个 Raw Input 事件解析
@@ -405,6 +417,7 @@ python -m unittest discover -s tests -v
 - 21 个云端 ASR 帧构造/响应解析/后端选择
 - 9 个纯本地解码（XOR 密钥/连续 IMA/真实帧回归）
 - 5 个识别词表设置与解析
+- 2 个纯本地模式开关与强制 Vosk 后端
 - 8 个设备目录/类型/删除恢复
 - 3 个 104 键布局数据
 - 4 个配置默认值/合并/主题回退

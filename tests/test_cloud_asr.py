@@ -110,16 +110,27 @@ class TestBackendSettings(unittest.TestCase):
 
     def test_backend_chain_modes(self):
         win = vp.VoiceWindow.__new__(vp.VoiceWindow)
-        win.cfg = {"asr_backend": 0}
+        win.cfg = {"asr_backend": 0, "local_only": 0}
         self.assertEqual(win._backend_chain(False), ["vosk", "cloud"])
         self.assertEqual(win._backend_chain(True),
                          ["vosk", "cloud", "clipboard"])
-        win.cfg = {"asr_backend": 1}
+        win.cfg = {"asr_backend": 1, "local_only": 0}
         self.assertEqual(win._backend_chain(False), ["vosk"])
-        win.cfg = {"asr_backend": 2}
+        win.cfg = {"asr_backend": 2, "local_only": 0}
         self.assertEqual(win._backend_chain(True), ["clipboard"])
-        win.cfg = {"asr_backend": 3}
+        win.cfg = {"asr_backend": 3, "local_only": 0}
         self.assertEqual(win._backend_chain(False), ["cloud"])
+
+    def test_local_only_forces_vosk(self):
+        win = vp.VoiceWindow.__new__(vp.VoiceWindow)
+        for mode in (0, 1, 2, 3):
+            win.cfg = {"asr_backend": mode, "local_only": 1}
+            self.assertEqual(win._backend_chain(True), ["vosk"])
+
+    def test_local_only_default(self):
+        item = next(d for d in vp.PARAM_DEFS if d[0] == "local_only")
+        self.assertEqual(item[3], 1)
+        self.assertEqual(item[7], "bool")
 
     def test_clipboard_helpers_callable(self):
         self.assertIsInstance(vp.clipboard_sequence(), int)

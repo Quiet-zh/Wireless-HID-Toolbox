@@ -12,3 +12,4 @@ dist/
 tmp_onefile/
 .vscode/
 .workbuddy/memory/
+.tmp_capture/

@@ -1,0 +1,126 @@
+# 能力总览
+
+> 本文是项目能力的**一页速查**。协议细节与逆向过程见
+> [AiMouse 语音链路逆向笔记](AiMouse-RE-Notes.md)，版本历史见
+> [CHANGELOG.md](../CHANGELOG.md)。
+
+## 1. 核心能力
+
+| 领域 | 能力 | 依赖 |
+| --- | --- | --- |
+| 电量 | EWEADN 8K、PMO WAVE75、罗技 G304、魔声 AI 垂直鼠标等 | 无 |
+| 设备目录 | 登记/删除/恢复/类型、统一字段、托盘逐设备开关 | 无 |
+| HID 调试 | Feature / Output / Input 报告、Report ID 探测、手动标定 | 无 |
+| 鼠标键盘测试 | 多设备切换、按键/移动/滚轮/点击统计、104 键布局 | 无 |
+| **语音解码** | **纯本地**把 33B 加扰 ADPCM 还原成 16kHz WAV | **无**（零第三方运行时依赖） |
+| 语音转文字 | Vosk 本地 / 云端 ASR / 剪贴板桥接，按设置自动降级 | 可选 |
+| 主题 | 白天/黑夜配色 | 无 |
+| 打包 | `main.py` 统一入口，onefile / onedir | PyInstaller（可选） |
+
+## 2. 语音链路全景（完全本地）
+
+```
+0xFF91 HID 33B 0x1B 帧
+        │
+        ├─ [5:33] 的 28B 按位置 XOR ADPCM_XOR_MASK（28B 固定密钥）
+        │
+        ├─ 标准 IMA 解码：低 4 位先，predictor/index 跨帧连续（初始 0/0）
+        │
+        ├─ 16bit / 16kHz PCM  →  高通 / 归一化（可选） →  WAV
+        │
+        └─ Vosk 本地识别（可选词表约束）
+```
+
+实测（1528 帧 / 5.35s）：RMS **8694**、相邻差中位 **521**、饱和 **0.6%**，
+与官方驱动解码的 PCM 波形统计一致。
+
+**不需要**：云端 ASR、官方驱动运行、读取剪贴板、第三方运行时库。
+
+## 3. 识别模式与依赖矩阵
+
+| 设置 | 走的后端 | 联网 | 需要官方驱动 | 备注 |
+| --- | --- | --- | --- | --- |
+| `local_only=1`（默认） | 仅 Vosk | ❌ | ❌ | 完全纯本地 |
+| `local_only=0, asr_backend=0` | Vosk → 云端 → 剪贴板 | 可能 | 可能 | 自动降级 |
+| `asr_backend=1` | 仅 Vosk | ❌ | ❌ | |
+| `asr_backend=2` | 剪贴板桥接 | ❌ | ✅ | 复用官方识别结果 |
+| `asr_backend=3` | 云端 ASR | ✅ | 运行时凭据 | 需 `websockets` |
+
+可选依赖（**装了才启用，不装不影响其他功能**）：
+
+| 包 | 用途 |
+| --- | --- |
+| `vosk` + 中文模型 | 本地转文字 |
+| `websockets` | 云端 ASR |
+| `noisereduce` + `numpy` | 可选降噪（一般不建议） |
+
+模型目录：`%APPDATA%\ExtBatteryTray\models\vosk-model-small-cn-0.22`（42MB）。
+更强的 `vosk-model-cn-0.22`（1.3GB）可直接把 `model_dir` 指过去。
+
+## 4. 语音窗口参数速查
+
+设置（⚙）里共 **10 项**，每项都有输入框；数值项另有左右加减按钮，
+**点「保存」才生效**。配置文件：`%APPDATA%\ExtBatteryTray\voice_config.json`。
+
+| 参数 | 默认 | 说明 |
+| --- | --- | --- |
+| `highpass` | 150 | 高通截止 Hz，0 关闭 |
+| `peak` | 26000 | 归一化峰值 |
+| `denoise` | 0 | 降噪强度 0–100 |
+| `auto_transcribe` | 1 | 录完自动转文字 |
+| `max_seconds` | 30 | 单次最长录制 |
+| `save_dir` | `…\voice` | WAV 保存目录 |
+| `model_dir` | `…\vosk-model-small-cn-0.22` | Vosk 模型目录 |
+| `asr_backend` | 0 | 0 自动 / 1 Vosk / 2 剪贴板 / 3 云端 |
+| `local_only` | **1** | 1 = 只用本地 Vosk，完全不联网/不读剪贴板 |
+| `asr_grammar` | 空 | 逗号分隔候选词，启用词表约束 |
+
+**词表实测**（`local_decoded.wav`，用户说「测试语音输入一二三」）：
+
+| 配置 | 结果 |
+| --- | --- |
+| 小模型通用 | 「此事 语音 输入 与 啊 上」 |
+| 小模型 + `测试,语音,输入,一二三` | **「测试 语音 输入 一二三」** |
+
+窗口顶部绿色徽标会实时显示当前模式，例如
+`🟢 纯本地解码 · 仅本地 Vosk · 词表限制`；
+实时区域下方显示解码方式、识别后端与当前模型名。
+
+## 5. 关键文件索引
+
+| 文件 | 职责 |
+| --- | --- |
+| `aimouse_voice.py` | 帧解析、`ADPCM_XOR_MASK`、`decode_frames_local()`、WAV/滤波 |
+| `aimouse_voice_capture.py` | 命令行 HID 采集（`--list` / `--seconds`） |
+| `aimouse_voice_panel.py` | 语音窗口、录制线程、Vosk 封装、剪贴板桥接、设置 UI |
+| `aimouse_cloud_asr.py` | 官方云端 ASR 协议（可选，`websockets`） |
+| `hid_win.py` | Windows HID 枚举/读写（ctypes） |
+| `tools/verify_local_decode.py` | 独立验证纯本地解码链路（零依赖） |
+| `docs/AiMouse-RE-Notes.md` | 完整逆向过程、反汇编证据、协议细节 |
+| `tests/` | 115 个自动化用例 |
+
+## 6. 验证与自检
+
+```bat
+:: 解码链路回归（零依赖）
+python tools\verify_local_decode.py
+
+:: 全量测试
+python -m unittest discover -s tests
+
+:: 版本
+python main.py --version
+```
+
+## 7. 语音能力版本演进
+
+| 版本 | 里程碑 |
+| --- | --- |
+| 1.4.0 | 0xFF91 电量协议 |
+| 1.5.0 | ADPCM 解码（旧版，每帧独立） |
+| 1.6.0 | 语音窗口（录制/播放/转文字/设置） |
+| 1.9.2 | Frida 逐样本验证解码算法 100% 正确 |
+| 1.9.3 | 定位按位置固定 XOR 加扰 |
+| **1.10.0** | **纯本地解码打通**（精确密钥 + 跨帧连续 IMA） |
+| 1.11.0 | Vosk 识别词表约束（固定命令 100% 正确） |
+| 1.12.0 | 纯本地模式开关、界面模式徽标、能力文档整理 |

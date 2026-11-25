@@ -64,6 +64,8 @@ PARAM_DEFS = [
      DEFAULT_MODEL, None, None, None, "path"),
     ("asr_backend", "识别后端", "0 自动(本地优先) 1 仅Vosk 2 剪贴板 3 云端",
      0, 0, 3, 1, "int"),
+    ("local_only", "纯本地模式", "1=只用本地 Vosk，完全不联网/不读剪贴板；0=按识别后端设置",
+     1, 0, 1, 1, "bool"),
     ("asr_grammar", "识别词表(可选)", "逗号分隔的候选词；留空=通用识别，填了可显著提升固定命令准确率",
      "", None, None, None, "text"),
 ]
@@ -510,6 +512,7 @@ class VoiceWindow(tk.Toplevel):
         self._clip_before = 0
         self.selected: Optional[str] = None
         self._build()
+        self._refresh_mode()
         theme.apply_new(self, "panel")
         self.protocol("WM_DELETE_WINDOW", self._close)
         self._poll()
@@ -528,6 +531,10 @@ class VoiceWindow(tk.Toplevel):
                                fg=themed(FAINT),
                                font=("Microsoft YaHei UI", 10))
         self.status.pack(side="left", padx=16)
+        self.mode_label = tk.Label(head, text="", bg=themed(BG),
+                                   fg=themed(GREEN),
+                                   font=("Microsoft YaHei UI", 9))
+        self.mode_label.pack(side="left", padx=8)
         tk.Button(head, text="⚙ 设置", command=self._open_settings,
                   bg=themed(TRACK), fg=themed(SUB),
                   activebackground=themed(CARD_EDGE), relief="flat",
@@ -619,6 +626,7 @@ class VoiceWindow(tk.Toplevel):
         self.cfg = load_config()
         self.asr = AsrEngine(self.cfg.get("model_dir", DEFAULT_MODEL),
                              self.cfg.get("asr_grammar", ""))
+        self._refresh_mode()
         self.recorder = Recorder(self.events,
                                  int(self.cfg.get("max_seconds", 30)))
         self.recorder.start()
@@ -863,8 +871,29 @@ class VoiceWindow(tk.Toplevel):
         self._refresh_list()
         self.status.configure(text="已删除 %s" % name, fg=themed(FAINT))
 
+    def _refresh_mode(self) -> None:
+        """刷新顶部模式徽标与实时区的解码/后端提示。"""
+        local = int(self.cfg.get("local_only", 1) or 0)
+        if local:
+            backend = "仅本地 Vosk"
+        else:
+            backend = {0: "本地优先", 1: "Vosk", 2: "剪贴板",
+                       3: "云端 ASR"}.get(
+                int(self.cfg.get("asr_backend", 0) or 0), "自动")
+        gram = ("词表限制" if (self.cfg.get("asr_grammar", "") or "").strip()
+                else "通用识别")
+        model = os.path.basename(os.path.normpath(
+            self.cfg.get("model_dir", DEFAULT_MODEL)))
+        self.mode_label.configure(
+            text="🟢 纯本地解码 · %s · %s" % (backend, gram))
+        self.asr_hint.configure(
+            text="解码：纯本地（XOR+连续 IMA）｜识别：%s｜模型：%s" %
+                 (backend, model))
+
     def _backend_chain(self, allow_clipboard: bool) -> list[str]:
-        """按设置返回识别后端优先级。"""
+        """按设置返回识别后端优先级；纯本地模式强制只用 Vosk。"""
+        if int(self.cfg.get("local_only", 1) or 0):
+            return ["vosk"]
         mode = int(self.cfg.get("asr_backend", 0) or 0)
         if mode == 1:
             return ["vosk"]
@@ -929,6 +958,7 @@ class VoiceWindow(tk.Toplevel):
             self.cfg = cfg
             self.asr = AsrEngine(cfg.get("model_dir", DEFAULT_MODEL),
                                  cfg.get("asr_grammar", ""))
+            self._refresh_mode()
             self._refresh_list()
             self.status.configure(text="设置已保存", fg=themed(GREEN))
         VoiceSettingsDialog(self, self.cfg, done)
