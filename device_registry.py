@@ -20,6 +20,7 @@ import tray_common as tc
 PRIMARY = {
     "3554:F517": {"name": "EWEADN 8K", "order": 10, "kind": "mouse"},
     "36B0:WAVE75": {"name": "PMO WAVE75", "order": 20, "kind": "keyboard"},
+    "248A:60AB": {"name": "Monster AiMouse", "order": 25, "kind": "mouse"},
 }
 
 DEVICE_KINDS = ("mouse", "keyboard")
@@ -31,7 +32,8 @@ def infer_kind(key: str, name: str = "") -> str:
     if key.startswith("36B0") or "wave" in text or "keyboard" in text \
             or "键盘" in text:
         return "keyboard"
-    if key in ("3554:F517", "046D:C53F") or "mouse" in text or "鼠标" in text:
+    if key in ("3554:F517", "046D:C53F", "248A:60AB") or "mouse" in text \
+            or "aimouse" in text or "monster" in text or "鼠标" in text:
         return "mouse"
     return "mouse"
 

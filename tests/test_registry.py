@@ -35,6 +35,20 @@ class TestRegistry(unittest.TestCase):
         self.assertEqual(dr.kind_label("mouse"), "鼠标")
         self.assertEqual(dr.kind_label("keyboard"), "键盘")
 
+    def test_aimouse_registered(self):
+        # Monster AiMouse（248A:60AB）为本机 2.4G 鼠标，已登记到设备目录
+        self.assertIn("248A:60AB", dr.PRIMARY)
+        meta = dr.PRIMARY["248A:60AB"]
+        self.assertEqual(meta["name"], "Monster AiMouse")
+        self.assertEqual(meta["kind"], "mouse")
+        self.assertEqual(dr.canonical_key("248A:60AB", 0x248A, 0x60AB),
+                         "248A:60AB")
+        self.assertEqual(dr._ids("248A:60AB"), (0x248A, 0x60AB))
+        self.assertEqual(dr.friendly_name("248A:60AB", "AiMouse"),
+                         "Monster AiMouse")
+        self.assertEqual(dr.infer_kind("248A:60AB", "Monster AiMouse"),
+                         "mouse")
+
     def test_kind_delete_restore_with_fake_config(self):
         cfg = {"devices": {}}
 

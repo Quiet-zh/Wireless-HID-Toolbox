@@ -1,11 +1,13 @@
 # Wireless HID Toolbox（2.4G 外设工具箱）
 
-当前版本：**v1.2.1**（更新记录见 [CHANGELOG.md](CHANGELOG.md)）
+当前版本：**v1.3.0**（更新记录见 [CHANGELOG.md](CHANGELOG.md)）
 
 Windows 10/11 的 2.4G 无线外设电量与 HID 调试工具箱。纯 Python 标准库 +
 `ctypes` + `tkinter`，运行时不依赖任何第三方库。
 
 - **电量**：EWEADN 8K、PMO WAVE75、罗技 G304，以及协议表里的其他设备
+- **设备目录**：Monster AiMouse（`248A:60AB`）已登记，可在面板/托盘/测试面板显示；
+  其电量使用私有协议，当前未收录，需抓包后才能读出（见「支持的设备与协议」）
 - **主界面**：可选设备卡片、统一字段、托盘图标逐设备开关、最小化到托盘
 - **托盘**：每台勾选的设备一个数字图标，点击打开/恢复面板
 - **测试**：鼠标键盘测试，多设备切换监听、按键/移动/滚轮/坐标/点击统计
@@ -51,8 +53,14 @@ Windows 10/11 的 2.4G 无线外设电量与 HID 调试工具箱。纯 Python �
 | DARKRIM / 杰理 | `3654:6901`，JL_RCSP | TLV `0x01` |
 | ZOWIE DW | `04A5:800A`，双接口 | 电压插值（实验） |
 | 标准 HID | Battery Strength Usage | Feature 值 |
+| Monster AiMouse（本机） | `248A:60AB`，私有 `0xFF91` 上报 | 待抓包确认，当前不显示电量 |
 | 抓包协议 | `captured.json` | 任意偏移 |
 
+> Monster AiMouse 已登记到设备目录，但它的 HID 接口没有标准电量 Usage，
+> 现有协议也匹配不上；如需显示电量，请抓包后把偏移写入 `captured.json`
+> 或新增协议读取函数。`generic_scan.py --list` 的「标准 HID 电量（回退）」
+> 只是按 Feature 长度推断，并不代表已读到电量。
+>
 > EWEADN、PMO、罗技 G304 在本机实测；其他协议来自公开协议文档/仓库的移植，
 > 已做单元测试，但建议接上设备后用 `generic_scan.py --list` / `--scan` 验证。
 > 只发送只读查询，不写设备配置；未知 opcode 不要盲目爆破。
@@ -221,6 +229,7 @@ python app.py
 "devices": {
   "3554:F517": {"name": "EWEADN 8K", "show": true, "tray": true, "order": 10},
   "36B0:WAVE75": {"name": "PMO WAVE75", "show": true, "tray": true, "order": 20},
+  "248A:60AB": {"name": "Monster AiMouse", "show": true, "tray": true, "order": 25},
   "046D:C53F": {"name": "罗技 G304 / Lightspeed", "show": true, "tray": true, "order": 30}
 }
 ```
@@ -266,13 +275,13 @@ python tray_app.py --quit
 python -m unittest discover -s tests -v
 ```
 
-共 **50** 个用例：
+共 **51** 个用例：
 
 - 8 个鼠标协议/电压曲线
 - 5 个 Raw Input 事件解析
 - 4 个 PMO 键盘
 - 12 个多厂商协议帧/校验/解析
-- 7 个设备目录/类型/删除恢复
+- 8 个设备目录/类型/删除恢复
 - 3 个 104 键布局数据
 - 4 个配置默认值/合并/主题回退
 - 4 个主题配色映射

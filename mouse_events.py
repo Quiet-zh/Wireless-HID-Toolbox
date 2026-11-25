@@ -278,6 +278,7 @@ def list_test_devices() -> list[dict]:
         "36B0:3002": "keyboard",
         "36B0:3009": "keyboard",
         "046D:C53F": "mouse",
+        "248A:60AB": "mouse",
         "2F4C:1006": "keyboard",
     }
     known_label = {
@@ -285,6 +286,7 @@ def list_test_devices() -> list[dict]:
         "36B0:3002": "PMO WAVE75",
         "36B0:3009": "PMO WAVE75（USB）",
         "046D:C53F": "罗技 G304 / Lightspeed",
+        "248A:60AB": "Monster AiMouse",
         "2F4C:1006": "COLORFUL 键盘",
     }
 
