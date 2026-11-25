@@ -8,29 +8,42 @@ python -m unittest discover -s tests -v
 
 不依赖真实鼠标/键盘，也不需要管理员权限。GUI 相关功能需要手动验收。
 
-当前：**83 个自动化用例**。
+当前：**122 个自动化用例**。
+
+> 需要 `tkinter`（GUI 相关用例会自动跳过无 tkinter 的环境），
+> 不需要 vosk / websockets / numpy 等可选依赖。
 
 ## 自动化覆盖
 
 | 文件 | 用例 | 覆盖内容 |
 |---|---:|---|
-| `test_aimouse_voice.py` | 16 | AiMouse ADPCM 解码、帧识别、分段、WAV 输出 |
+| `test_aimouse_voice.py` | 16 | AiMouse ADPCM 解码（旧版）、帧识别、分段、WAV 输出 |
+| `test_cloud_asr.py` | 25 | 云端 ASR 帧构造/响应解析、识别后端链、词表设置与解析、大模型兼容性 |
 | `test_config.py` | 4 | 配置默认值、window 局部合并、保存回读、主题回退 |
 | `test_events.py` | 5 | Raw Input 鼠标按键/滚轮/键盘报文解析 |
 | `test_generic.py` | 17 | 多厂商协议帧、校验、解析、扫描辅助 |
 | `test_keyboard_view.py` | 3 | 104 键布局数量、边界、核心键位 |
+| `test_local_decode.py` | 9 | 纯本地解码：XOR 密钥、跨帧连续 IMA、真实帧回归 fixture |
 | `test_pmo.py` | 4 | PMO WAVE75 电量帧 |
 | `test_proto.py` | 8 | EWEADN 电量帧、电压曲线、异常帧 |
 | `test_registry.py` | 13 | 设备 key、名称、类型推断、旧名迁移、在线判定、删除/恢复 |
 | `test_theme.py` | 4 | 白天/黑夜配色映射与主色覆盖 |
+| `test_ui_common.py` | 5 | 按需滚动条 GUI 回归：显隐、横向、删除后复原 |
 | `test_version_packaging.py` | 3 | 版本号、Windows 版本资源、打包模式 |
 | `test_voice_panel.py` | 6 | 语音窗口参数定义与配置回读 |
+
+独立验证工具（不计入自动化用例）：
+
+```bat
+python tools\verify_local_decode.py
+```
 
 ## 测试隔离
 
 - 配置测试使用 `tempfile`，不会写真实 `%APPDATA%` 配置。
 - 设备删除/类型测试使用假配置字典，不会改本机设备列表。
 - 主题测试只测颜色数据，不创建 Tk 窗口。
+- GUI 用例在 `setUp`/`tearDown` 创建并销毁临时 Tk 根窗口，不触碰真实配置。
 
 ## GUI 手动验收
 
@@ -41,10 +54,10 @@ python -m unittest discover -s tests -v
       关闭面板后再粘贴仍然有效（Windows 用系统剪贴板直写）
 - [ ] 内容不足时右侧滚动条隐藏；增加卡片/缩小窗口后出现
 - [ ] 关闭按钮行为：仅主界面 / 所有可见窗口 / 完全退出
-- [ ] 托盘未运行时，非“完全退出”的关闭先询问是否常驻
+- [ ] 托盘未运行时，非"完全退出"的关闭先询问是否常驻
 - [ ] 无托盘关闭最后窗口时完全退出
 - [ ] 最小化：托盘 / 正常任务栏两种模式
-- [ ] 退出托盘后右下角变为“托盘已退出”，不卡在“正在退出”
+- [ ] 退出托盘后右下角变为"托盘已退出"，不卡在"正在退出"
 
 ### 设置
 
@@ -63,11 +76,24 @@ python -m unittest discover -s tests -v
 ### HID 调试台
 
 - [ ] 设备列表、树形表格在两种主题下可读
+- [ ] 纵向/横向滚动条仅在内容超出对应区域时出现
 - [ ] Notebook、输入框、按钮、日志区颜色正常
 - [ ] 主题切换后已打开窗口自动跟随
+
+### 语音窗口
+
+- [ ] 顶部徽标显示当前模式（默认 `🟢 纯本地解码 · 仅本地 Vosk · 通用识别`）
+- [ ] 设置共 10 项参数，数值项带左右加减按钮，点「保存」才生效
+- [ ] 录音列表滚动条：3 条时隐藏、200 条时出现、删回少量后再隐藏
+- [ ] 设置对话框滚动条：参数未超高时隐藏
+- [ ] 长按语音键录音、松开保存 WAV；列表播放/停止/删除/转文字
+- [ ] `local_only=1` 时不联网、不读剪贴板；设为 0 后按后端链降级
+- [ ] 填词表后固定命令识别正确；切到大模型时提示「词表不适用」
+- [ ] 检测到大模型已装未启用时，实时区给出 `model_dir` 切换提示
 
 ## 新增测试约定
 
 - 纯数据/协议测试放在 `tests/`，命名 `test_*.py`。
 - 会写配置的逻辑必须 patch `tray_common.load_config/save_config` 或使用临时路径。
 - GUI 绘制逻辑优先抽成可测试的颜色/布局数据；Tk 创建测试不作为必跑项。
+- 新增滚动区域一律复用 `ui_common.attach_auto_scrollbar`，不要手写常驻滚动条。

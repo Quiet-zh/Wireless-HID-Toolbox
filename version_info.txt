@@ -1,8 +1,8 @@
 ﻿# UTF-8
 VSVersionInfo(
   ffi=FixedFileInfo(
-    filevers=(1, 12, 2, 0),
-    prodvers=(1, 12, 2, 0),
+    filevers=(1, 12, 3, 0),
+    prodvers=(1, 12, 3, 0),
     mask=0x3f,
     flags=0x0,
     OS=0x40004,
@@ -17,12 +17,12 @@ VSVersionInfo(
         [
           StringStruct('CompanyName', 'Wireless HID Toolbox'),
           StringStruct('FileDescription', 'Wireless HID Toolbox 2.4G 外设工具箱'),
-          StringStruct('FileVersion', '1.12.2.0'),
+          StringStruct('FileVersion', '1.12.3.0'),
           StringStruct('InternalName', 'WirelessHIDToolbox'),
           StringStruct('LegalCopyright', 'MIT'),
           StringStruct('OriginalFilename', 'WirelessHIDToolbox.exe'),
           StringStruct('ProductName', 'Wireless HID Toolbox'),
-          StringStruct('ProductVersion', '1.12.2.0')
+          StringStruct('ProductVersion', '1.12.3.0')
         ]
       )
     ]),
