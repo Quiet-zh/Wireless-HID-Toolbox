@@ -157,8 +157,17 @@ class TestGrammarSettings(unittest.TestCase):
             words = [w for w in re.split(r"[,，\s]+", text.strip()) if w]
             self.assertEqual(words, ["测试", "语音", "输入"])
 
+    def test_big_model_dir_defined(self):
+        self.assertTrue(vp.BIG_MODEL_DIR.endswith("vosk-model-cn-0.22"))
+
+    def test_grammar_only_on_small_model(self):
+        self.assertTrue(vp.AsrEngine(
+            "vosk-model-small-cn-0.22")._grammar_supported())
+        self.assertFalse(vp.AsrEngine(
+            "vosk-model-cn-0.22")._grammar_supported())
+
     def test_param_count(self):
-        self.assertGreaterEqual(len(vp.PARAM_DEFS), 9)
+        self.assertGreaterEqual(len(vp.PARAM_DEFS), 10)
 
 
 if __name__ == "__main__":

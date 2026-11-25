@@ -45,6 +45,7 @@ MUTED = "#7d8499"
 
 CONFIG_PATH = os.path.join(tc.RUNTIME_DIR, "voice_config.json")
 DEFAULT_MODEL = os.path.join(tc.RUNTIME_DIR, "models", "vosk-model-small-cn-0.22")
+BIG_MODEL_DIR = os.path.join(tc.RUNTIME_DIR, "models", "vosk-model-cn-0.22")
 DEFAULT_SAVE = os.path.join(tc.RUNTIME_DIR, "voice")
 
 # (键, 参数名, 中文描述, 默认值, 最小, 最大, 步长, 类型)
@@ -195,11 +196,16 @@ class AsrEngine:
             self._model = Model(self.model_dir)
         return self._model
 
+    def _grammar_supported(self) -> bool:
+        """Vosk 完整版大模型不支持 runtime grammar，仅 small 系列可用。"""
+        return "small" in os.path.basename(
+            os.path.normpath(self.model_dir)).lower()
+
     def _make_rec(self, KaldiRecognizer):
-        """构造识别器；设置了词表时启用 Vosk grammar 约束。"""
+        """构造识别器；设置了词表且模型支持时启用 Vosk grammar 约束。"""
         model = self._ensure_model()
         words = [w for w in re.split(r"[,，\s]+", self.grammar.strip()) if w]
-        if words:
+        if words and self._grammar_supported():
             return KaldiRecognizer(
                 model, av.SAMPLE_RATE,
                 json.dumps(words + ["[unk]"], ensure_ascii=False))
@@ -896,11 +902,22 @@ class VoiceWindow(tk.Toplevel):
                 else "通用识别")
         model = os.path.basename(os.path.normpath(
             self.cfg.get("model_dir", DEFAULT_MODEL)))
+        has_grammar = bool((self.cfg.get("asr_grammar", "") or "").strip())
+        # 大模型不支持 runtime grammar；同时提示用户可切换到已装的大模型
+        if has_grammar and not self.asr._grammar_supported():
+            gram = "词表不适用(大模型)"
+        big_ready = os.path.isdir(BIG_MODEL_DIR)
+        using_big = os.path.normpath(
+            self.cfg.get("model_dir", DEFAULT_MODEL)) == os.path.normpath(
+                BIG_MODEL_DIR)
         self.mode_label.configure(
-            text="🟢 纯本地解码 · %s · %s" % (backend, gram))
-        self.asr_hint.configure(
-            text="解码：纯本地（XOR+连续 IMA）｜识别：%s｜模型：%s" %
-                 (backend, model))
+            text="🟢 纯本地解码 · %s · %s%s" %
+                 (backend, gram, " · 大模型" if using_big else ""))
+        hint = "解码：纯本地（XOR+连续 IMA）｜识别：%s｜模型：%s" % (
+            backend, model)
+        if big_ready and not using_big:
+            hint += "｜已装大模型，可在设置里把 model_dir 指向 vosk-model-cn-0.22"
+        self.asr_hint.configure(text=hint)
 
     def _backend_chain(self, allow_clipboard: bool) -> list[str]:
         """按设置返回识别后端优先级；纯本地模式强制只用 Vosk。"""
