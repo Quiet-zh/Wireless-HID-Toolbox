@@ -70,7 +70,7 @@ def interval_label(seconds: int) -> str:
 class DeviceCard(tk.Frame):
     """所有设备共用同一套字段：连接 / 充电 / 电压 / 数据源。"""
 
-    def __init__(self, parent, snap: dr.DeviceSnapshot):
+    def __init__(self, parent, snap: dr.DeviceSnapshot, on_voice=None):
         super().__init__(parent, bg=CARD, width=440, height=205,
                          highlightbackground=CARD_EDGE, highlightthickness=1)
         self.grid_propagate(False)
@@ -85,6 +85,14 @@ class DeviceCard(tk.Frame):
         self.status_label = tk.Label(head, text="", bg=CARD, fg=FAINT,
                                      font=("Microsoft YaHei UI", 9), anchor="e")
         self.status_label.pack(side="right")
+        self.voice_btn = None
+        if on_voice is not None:
+            self.voice_btn = tk.Button(
+                head, text="🎤 语音", command=on_voice, bg=TRACK,
+                fg=GREEN, activebackground=CARD_EDGE, activeforeground=GREEN,
+                relief="flat", font=("Microsoft YaHei UI", 8, "bold"),
+                padx=8, pady=2, cursor="hand2")
+            self.voice_btn.pack(side="right", padx=(0, 8))
 
         self.sub_label = tk.Label(self, text=snap.subtitle, bg=CARD, fg=FAINT,
                                   font=("Consolas", 8), anchor="w")
@@ -431,7 +439,9 @@ class BatteryPanel(tk.Tk):
         for i, snap in enumerate(visible):
             card = self.cards.get(snap.key)
             if card is None:
-                card = DeviceCard(self.inner, snap)
+                on_voice = (self._open_voice_window
+                            if snap.key == "248A:60AB" else None)
+                card = DeviceCard(self.inner, snap, on_voice=on_voice)
                 self.cards[snap.key] = card
                 theme.apply_new(card, "panel")
             card.update_reading(snap)
@@ -576,6 +586,23 @@ class BatteryPanel(tk.Tk):
             self.theme_btn.configure(text=self._theme_button_text())
 
     # ------------------------------------------------------------- 设置
+    def _open_voice_window(self):
+        """打开 Monster AiMouse 语音窗口（单实例复用）。"""
+        import aimouse_voice_panel as avp
+        win = getattr(self, "_voice_win", None)
+        if win is not None:
+            try:
+                win.deiconify()
+                win.lift()
+                win.focus_force()
+                return
+            except tk.TclError:
+                self._voice_win = None
+        self._voice_win = avp.open_window(self, on_close=self._on_voice_closed)
+
+    def _on_voice_closed(self):
+        self._voice_win = None
+
     def _open_settings(self):
         SettingsWindow(self, demo=self.demo, on_change=self._settings_changed)
 

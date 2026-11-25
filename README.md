@@ -1,6 +1,6 @@
 # Wireless HID Toolbox（2.4G 外设工具箱）
 
-当前版本：**v1.5.0**（更新记录见 [CHANGELOG.md](CHANGELOG.md)）
+当前版本：**v1.6.0**（更新记录见 [CHANGELOG.md](CHANGELOG.md)）
 
 Windows 10/11 的 2.4G 无线外设电量与 HID 调试工具箱。纯 Python 标准库 +
 `ctypes` + `tkinter`，运行时不依赖任何第三方库。
@@ -10,6 +10,8 @@ Windows 10/11 的 2.4G 无线外设电量与 HID 调试工具箱。纯 Python �
   并通过 `0xFF91` 私有口读取电量（实验性解析，见「支持的设备与协议」）
 - **语音解码**：Monster AiMouse 长按语音键时，`0xFF91` 会回传 ADPCM 语音，
   `aimouse_voice.py` 可还原成 16kHz WAV（见「语音解码」）
+- **语音窗口**：AiMouse 卡片上的「🎤 语音」按钮，支持监测录音、列表播放/删除、
+  实时转文字与参数设置（见「语音窗口」）
 - **主界面**：可选设备卡片、统一字段、托盘图标逐设备开关、最小化到托盘
 - **托盘**：每台勾选的设备一个数字图标，点击打开/恢复面板
 - **测试**：鼠标键盘测试，多设备切换监听、按键/移动/滚轮/坐标/点击统计
@@ -228,6 +230,43 @@ av.save_wav("voice.wav", av.normalize(samples))
 
 > 官方驱动的做法正是把 ADPCM 原样发往云端 ASR、不做本地降噪，原因就在这里。
 
+## 语音窗口（Monster AiMouse 卡片）
+
+主界面 Monster AiMouse 卡片右上角的 **🎤 语音** 按钮打开语音窗口：
+
+- **开始监测 / 结束监测**：长按鼠标语音键开始录音，松开自动保存一条 WAV
+- **录音列表**：点击选中，支持 **播放 / 停止 / 删除 / 转文字**
+- **实时区域**：录音中显示音量条与实时识别文字
+- **设置（⚙）**：每个参数一行，含参数名、中文描述、输入框与左右加减按钮，
+  **点「保存」才生效**
+
+可调参数（存放于 `%APPDATA%\ExtBatteryTray\voice_config.json`）：
+
+| 参数 | 说明 | 默认 |
+| --- | --- | --- |
+| `highpass` | 高通截止频率（Hz）；0 关闭 | 150 |
+| `peak` | 归一化峰值；越小越不易削波 | 26000 |
+| `denoise` | 降噪强度 0–100（需 noisereduce） | 0 |
+| `auto_transcribe` | 录制结束后自动识别（1/0） | 1 |
+| `max_seconds` | 单次最长录制（秒） | 30 |
+| `save_dir` | 音频保存目录 | `%APPDATA%\ExtBatteryTray\voice` |
+| `model_dir` | Vosk 中文模型目录 | `…\models\vosk-model-small-cn-0.22` |
+
+### 语音识别（可选）
+
+识别使用 Vosk 离线引擎，**装了就启用，没装则自动降级为「仅录音」**，
+不影响其他功能，项目本身仍保持零第三方运行时依赖：
+
+```bat
+python -m pip install vosk
+```
+
+中文小模型（约 42MB）下载后解压到 `model_dir`：
+
+```text
+https://alphacephei.com/vosk/models/vosk-model-small-cn-0.22.zip
+```
+
 ## HID 调试台
 
 ```bat
@@ -311,7 +350,7 @@ python tray_app.py --quit
 python -m unittest discover -s tests -v
 ```
 
-共 **72** 个用例：
+共 **78** 个用例：
 
 - 8 个鼠标协议/电压曲线
 - 5 个 Raw Input 事件解析
@@ -319,6 +358,7 @@ python -m unittest discover -s tests -v
 - 12 个多厂商协议帧/校验/解析
 - 5 个 AiMouse 0xFF91 帧解析与设备匹配
 - 16 个 AiMouse 语音解码/分段/WAV 输出
+- 6 个语音窗口参数与配置读写
 - 8 个设备目录/类型/删除恢复
 - 3 个 104 键布局数据
 - 4 个配置默认值/合并/主题回退
