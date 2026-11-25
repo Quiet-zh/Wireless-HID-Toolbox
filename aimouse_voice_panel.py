@@ -61,6 +61,8 @@ PARAM_DEFS = [
      DEFAULT_SAVE, None, None, None, "path"),
     ("model_dir", "识别模型目录", "Vosk 中文模型所在目录",
      DEFAULT_MODEL, None, None, None, "path"),
+    ("asr_backend", "识别后端", "0 自动(云端/Vosk/剪贴板) 1 仅Vosk 2 剪贴板 3 云端",
+     0, 0, 3, 1, "int"),
 ]
 
 DEFAULTS = {d[0]: d[3] for d in PARAM_DEFS}
@@ -70,6 +72,65 @@ def themed(color: str) -> str:
     if theme.current() == "light":
         return theme.PANEL_LIGHT.get(color.lower(), color)
     return color
+
+
+# ---------------------------------------------------------------------------
+# 剪贴板桥接（兜底后端：复用官方驱动的识别结果，零依赖）
+# ---------------------------------------------------------------------------
+def clipboard_sequence() -> int:
+    """剪贴板序列号；官方识别完成后会写入剪贴板使序列号变化。"""
+    try:
+        import ctypes
+        from ctypes import wintypes
+        user32 = ctypes.WinDLL("user32", use_last_error=True)
+        user32.GetClipboardSequenceNumber.restype = wintypes.DWORD
+        return int(user32.GetClipboardSequenceNumber())
+    except Exception:
+        return 0
+
+
+def clipboard_text() -> str:
+    """读取剪贴板 Unicode 文本。"""
+    try:
+        import ctypes
+        from ctypes import wintypes
+        user32 = ctypes.WinDLL("user32", use_last_error=True)
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        user32.OpenClipboard.argtypes = [wintypes.HWND]
+        user32.GetClipboardData.argtypes = [wintypes.UINT]
+        user32.GetClipboardData.restype = wintypes.HANDLE
+        kernel32.GlobalLock.argtypes = [wintypes.HANDLE]
+        kernel32.GlobalLock.restype = ctypes.c_void_p
+        kernel32.GlobalUnlock.argtypes = [wintypes.HANDLE]
+        if not user32.OpenClipboard(None):
+            return ""
+        try:
+            handle = user32.GetClipboardData(13)  # CF_UNICODETEXT
+            if not handle:
+                return ""
+            ptr = kernel32.GlobalLock(handle)
+            if not ptr:
+                return ""
+            try:
+                return ctypes.wstring_at(ptr)
+            finally:
+                kernel32.GlobalUnlock(handle)
+        finally:
+            user32.CloseClipboard()
+    except Exception:
+        return ""
+
+
+def wait_clipboard_result(before: int, timeout: float = 2.0) -> str:
+    """等待剪贴板变化并返回新文本；超时返回空串。"""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if clipboard_sequence() != before:
+            text = clipboard_text().strip()
+            if text:
+                return text
+        time.sleep(0.05)
+    return ""
 
 
 # ---------------------------------------------------------------------------
@@ -423,6 +484,7 @@ class VoiceWindow(tk.Toplevel):
         self._asr_active = False
         self._partial = ""
         self._playing = False
+        self._clip_before = 0
         self.selected: Optional[str] = None
         self._build()
         theme.apply_new(self, "panel")
@@ -572,6 +634,10 @@ class VoiceWindow(tk.Toplevel):
                     self._asr_active = True
                 elif kind == "asr_text":
                     self._set_text(item[1])
+                elif kind == "asr_backend":
+                    self.asr_hint.configure(text="识别来源：%s" % item[1])
+                    self.status.configure(text="识别完成 · %s" % item[1],
+                                          fg=themed(GREEN))
                 elif kind == "asr_unavailable":
                     self.asr_hint.configure(text=item[1])
         except queue.Empty:
@@ -584,6 +650,8 @@ class VoiceWindow(tk.Toplevel):
     def _on_rec_start(self) -> None:
         self._partial = ""
         self._asr_active = False
+        # 记录剪贴板基线：官方驱动识别完成后会写入剪贴板
+        self._clip_before = clipboard_sequence()
         self.status.configure(text="● 录音中…", fg=themed(RED))
         self._set_text("")
 
@@ -662,7 +730,7 @@ class VoiceWindow(tk.Toplevel):
         elif self._partial:
             self._set_text(self._partial)
         if int(self.cfg.get("auto_transcribe", 1) or 0) and not final:
-            self._transcribe()
+            self._transcribe(allow_clipboard=True)
 
     def _denoise(self, samples: list[int], strength: int) -> list[int]:
         try:
@@ -771,29 +839,62 @@ class VoiceWindow(tk.Toplevel):
         self._refresh_list()
         self.status.configure(text="已删除 %s" % name, fg=themed(FAINT))
 
-    def _transcribe(self) -> None:
+    def _backend_chain(self, allow_clipboard: bool) -> list[str]:
+        """按设置返回识别后端优先级。"""
+        mode = int(self.cfg.get("asr_backend", 0) or 0)
+        if mode == 1:
+            return ["vosk"]
+        if mode == 2:
+            return ["clipboard"] if allow_clipboard else []
+        if mode == 3:
+            return ["cloud"]
+        chain = ["cloud", "vosk"]
+        if allow_clipboard:
+            chain.append("clipboard")
+        return chain
+
+    def _transcribe(self, allow_clipboard: bool = False) -> None:
         if not self.selected or not os.path.exists(self.selected):
             messagebox.showinfo("提示", "请先选中一条录音", parent=self)
             return
-        if not self.asr.available():
-            messagebox.showwarning(
-                "语音识别不可用",
-                "需要安装 vosk 并准备中文模型：\n\n"
-                "  pip install vosk\n\n模型目录（可在设置里改）：\n  %s\n\n%s"
-                % (self.cfg.get("model_dir", DEFAULT_MODEL),
-                   self.asr.error or ""), parent=self)
+        chain = self._backend_chain(allow_clipboard)
+        if not chain:
+            messagebox.showinfo(
+                "提示", "当前后端「剪贴板桥接」只在刚录制完时可用；\n"
+                "请在设置里改成「自动 / Vosk / 云端」。", parent=self)
             return
         self.status.configure(text="识别中…", fg=themed(AMBER))
         path = self.selected
+        before = self._clip_before if allow_clipboard else 0
+
+        labels = {"cloud": "云端 ASR", "vosk": "Vosk",
+                  "clipboard": "剪贴板桥接"}
 
         def work():
-            text = self.asr.transcribe_file(path)
-            if text is None:
-                self.events.put(("error", "识别失败: %s" % self.asr.error))
+            text = None
+            used = ""
+            for backend in chain:
+                if backend == "cloud":
+                    try:
+                        import aimouse_cloud_asr as ca
+                        text = ca.transcribe_wav(path)
+                    except Exception:
+                        text = None
+                elif backend == "vosk":
+                    text = (self.asr.transcribe_file(path)
+                            if self.asr.available() else None)
+                elif backend == "clipboard":
+                    text = wait_clipboard_result(before, timeout=2.5) or None
+                if text:
+                    used = labels.get(backend, backend)
+                    break
+            if text:
+                self.events.put(("asr_text", text))
+                self.events.put(("asr_backend", used))
             else:
-                self.events.put(("asr_text",
-                                 text or "（没有识别到文字）"))
-                self.events.put(("key", 0x38))
+                self.events.put(("asr_unavailable",
+                                 "未得到识别结果（已尝试：%s）"
+                                 % "、".join(labels.get(b, b) for b in chain)))
         threading.Thread(target=work, daemon=True).start()
 
     # -- 设置 -------------------------------------------------------------

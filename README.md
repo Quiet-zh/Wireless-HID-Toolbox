@@ -1,6 +1,6 @@
 # Wireless HID Toolbox（2.4G 外设工具箱）
 
-当前版本：**v1.8.1**（更新记录见 [CHANGELOG.md](CHANGELOG.md)）
+当前版本：**v1.9.0**（更新记录见 [CHANGELOG.md](CHANGELOG.md)）
 
 Windows 10/11 的 2.4G 无线外设电量与 HID 调试工具箱。纯 Python 标准库 +
 `ctypes` + `tkinter`，运行时不依赖任何第三方库。
@@ -14,6 +14,8 @@ Windows 10/11 的 2.4G 无线外设电量与 HID 调试工具箱。纯 Python �
   `aimouse_voice.py` 可还原成 16kHz WAV（见「语音解码」）
 - **语音窗口**：魔声 AI 垂直鼠标卡片上的「🎤 语音」按钮，支持监测录音、列表播放/删除、
   实时转文字与参数设置（见「语音窗口」）
+- **转文字兜底**：自动按「云端 ASR → Vosk → 剪贴板桥接」降级，
+  未装任何可选依赖也能复用官方驱动的识别结果（见「语音窗口」）
 - **主界面**：可选设备卡片、统一字段、托盘图标逐设备开关、最小化到托盘；
   点击卡片上的设备名即复制到剪贴板，短暂显示「✓ 已复制」后恢复
 - **托盘**：每台勾选的设备一个数字图标，点击打开/恢复面板
@@ -29,6 +31,8 @@ Windows 10/11 的 2.4G 无线外设电量与 HID 调试工具箱。纯 Python �
 - [主题说明](docs/THEME.md)：白天/黑夜配色与新增颜色约定
 - [测试说明](docs/TESTING.md)：自动化覆盖、GUI 手动验收清单
 - [设备配置](docs/DEVICE_CONFIG.md)：设备类型、删除/恢复、配置字段
+- [AiMouse 语音链路逆向笔记](docs/AiMouse-RE-Notes.md)：帧结构、反汇编证据、
+  云端 ASR 协议、配对实验与未解决问题
 
 ![黑夜主题](docs/panel.png)
 
@@ -262,17 +266,27 @@ av.save_wav("voice.wav", av.normalize(samples))
 | `max_seconds` | 单次最长录制（秒） | 30 |
 | `save_dir` | 音频保存目录 | `%APPDATA%\ExtBatteryTray\voice` |
 | `model_dir` | Vosk 中文模型目录 | `…\models\vosk-model-small-cn-0.22` |
+| `asr_backend` | 识别后端：0 自动 / 1 Vosk / 2 剪贴板 / 3 云端 | 0 |
 
-### 语音识别（可选）
+### 识别后端（自动降级）
 
-识别使用 Vosk 离线引擎，**装了就启用，没装则自动降级为「仅录音」**，
-不影响其他功能，项目本身仍保持零第三方运行时依赖：
+窗口按设置里的 `asr_backend` 选择后端；默认「0 自动」按
+**云端 ASR → Vosk → 剪贴板桥接** 依次尝试，任一环节出结果即停止：
+
+| 后端 | 依赖 | 说明 |
+| --- | --- | --- |
+| 云端 ASR | `websockets`（可选） | `aimouse_cloud_asr.py` 实现官方 `asr.miclink.net/ws` 协议；凭据可配置，或只读从驱动进程内存取 |
+| Vosk | `vosk` + 中文模型 | 本地离线；小模型对 4-bit ADPCM 噪声鲁棒性有限 |
+| 剪贴板桥接 | 无 | 官方驱动松开语音键后会把识别文字写入剪贴板，窗口监听序列号变化取回；仅录制后可用 |
+
+三者都不可用时只保存音频，录制、播放、删除、设置不受影响。
+项目主体仍保持零第三方运行时依赖。
 
 ```bat
-python -m pip install vosk
+python -m pip install vosk websockets
 ```
 
-中文小模型（约 42MB）下载后解压到 `model_dir`：
+Vosk 中文小模型（约 42MB）解压到 `model_dir`：
 
 ```text
 https://alphacephei.com/vosk/models/vosk-model-small-cn-0.22.zip
@@ -363,7 +377,7 @@ python tray_app.py --quit
 python -m unittest discover -s tests -v
 ```
 
-共 **78** 个用例：
+共 **99** 个用例：
 
 - 8 个鼠标协议/电压曲线
 - 5 个 Raw Input 事件解析
@@ -372,6 +386,7 @@ python -m unittest discover -s tests -v
 - 5 个魔声 AI 垂直鼠标 0xFF91 帧解析与设备匹配
 - 16 个魔声 AI 垂直鼠标语音解码/分段/WAV 输出
 - 6 个语音窗口参数与配置读写
+- 21 个云端 ASR 帧构造/响应解析/后端选择
 - 8 个设备目录/类型/删除恢复
 - 3 个 104 键布局数据
 - 4 个配置默认值/合并/主题回退
