@@ -31,6 +31,20 @@
       "show": true,
       "tray": true,
       "order": 25
+    },
+    "1EA7:0064": {
+      "name": "英菲克 F15 无线鼠标",
+      "kind": "mouse",
+      "show": true,
+      "tray": true,
+      "order": 30
+    },
+    "1A2C:7FFF": {
+      "name": "狼蛛 S99 三模键盘",
+      "kind": "keyboard",
+      "show": true,
+      "tray": true,
+      "order": 40
     }
   }
 }
@@ -44,6 +58,15 @@ PID `0x60AB`，产品名 AiMouse）。它已登记在设备目录里，面板、
 `0C 4D ?? 69 00 <电量> 04 01 00 4C` 的偏移 5 即百分比；心跳帧
 `0C 4D 05 67 00 4C ...` 不含电量，解析时必须排除。该协议为**实验性**，
 按当前实测约 100% 校准，仅在 `248A:60AB` 上启用；鼠标休眠时回退到上次缓存。
+
+`1EA7:0064` 是英菲克 F15 无线鼠标（VID `0x1EA7` SHARKOON Technologies GmbH /
+PID `0x0064`），`1A2C:7FFF` 是狼蛛 S99 三模键盘（VID `0x1A2C` China Resource
+Semico Co., Ltd / PID `0x7FFF`，产品名 `2.4G Wireless Device`，2.4G 连接）。
+两台设备已登记到设备目录，面板、托盘和鼠标键盘测试面板都能按名称和类型识别；
+但尚未收录私有电量协议，当前只显示占位卡片、不显示百分比。如果设备暴露标准
+Battery Strength Usage，`generic_protocols.py` 的 `read_standard()` 会自动读到；
+否则需要在官方驱动开启时用 HID 调试台抓包，把报文偏移写入 `captured.json`
+或新增协议读取函数后再显示电量。加入 `SPECS` 之前不会尝试读取这两台设备。
 
 - `kind`：`mouse` / `keyboard`，设置界面显示为“鼠标/键盘”
 - `show`：主面板是否显示卡片

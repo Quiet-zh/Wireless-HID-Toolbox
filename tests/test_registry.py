@@ -49,6 +49,36 @@ class TestRegistry(unittest.TestCase):
         self.assertEqual(dr.infer_kind("248A:60AB", "Monster AiMouse"),
                          "mouse")
 
+    def test_infike_f15_registered(self):
+        # 英菲克 F15 无线鼠标（1EA7:0064）为本机 2.4G 鼠标，仅登记
+        self.assertIn("1EA7:0064", dr.PRIMARY)
+        meta = dr.PRIMARY["1EA7:0064"]
+        self.assertEqual(meta["name"], "英菲克 F15 无线鼠标")
+        self.assertEqual(meta["kind"], "mouse")
+        self.assertEqual(dr.canonical_key("1EA7:0064", 0x1EA7, 0x0064),
+                         "1EA7:0064")
+        self.assertEqual(dr._ids("1EA7:0064"), (0x1EA7, 0x0064))
+        self.assertEqual(dr.friendly_name("1EA7:0064", "USB Receiver"),
+                         "英菲克 F15 无线鼠标")
+        self.assertEqual(dr.infer_kind("1EA7:0064", "英菲克 F15 无线鼠标"),
+                         "mouse")
+
+    def test_aulol_s99_registered(self):
+        # 狼蛛 S99 三模键盘（1A2C:7FFF，产品名 2.4G Wireless Device）仅登记
+        self.assertIn("1A2C:7FFF", dr.PRIMARY)
+        meta = dr.PRIMARY["1A2C:7FFF"]
+        self.assertEqual(meta["name"], "狼蛛 S99 三模键盘")
+        self.assertEqual(meta["kind"], "keyboard")
+        self.assertEqual(dr.canonical_key("1A2C:7FFF", 0x1A2C, 0x7FFF),
+                         "1A2C:7FFF")
+        self.assertEqual(dr._ids("1A2C:7FFF"), (0x1A2C, 0x7FFF))
+        self.assertEqual(
+            dr.friendly_name("1A2C:7FFF", "2.4G Wireless Device"),
+            "狼蛛 S99 三模键盘")
+        # 产品名不含 keyboard/键盘 关键字，必须靠 VID 前缀判定为键盘
+        self.assertEqual(
+            dr.infer_kind("1A2C:7FFF", "2.4G Wireless Device"), "keyboard")
+
     def test_kind_delete_restore_with_fake_config(self):
         cfg = {"devices": {}}
 

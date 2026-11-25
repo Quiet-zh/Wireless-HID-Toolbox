@@ -205,7 +205,7 @@ class TrayApp:
                     snap: dr.DeviceSnapshot) -> bool:
         level = snap.percent
         text = str(level) if level is not None else "--"
-        plate = snap.key.startswith("36B0")
+        plate = snap.key.startswith(("36B0", "1A2C"))
         nid = self._nid(uID)
         nid.hIcon = win_icon.make_hicon(
             text, self._color(level, stale=snap.stale), plate)

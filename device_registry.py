@@ -21,6 +21,10 @@ PRIMARY = {
     "3554:F517": {"name": "EWEADN 8K", "order": 10, "kind": "mouse"},
     "36B0:WAVE75": {"name": "PMO WAVE75", "order": 20, "kind": "keyboard"},
     "248A:60AB": {"name": "Monster AiMouse", "order": 25, "kind": "mouse"},
+    "1EA7:0064": {"name": "英菲克 F15 无线鼠标",
+                  "order": 30, "kind": "mouse"},
+    "1A2C:7FFF": {"name": "狼蛛 S99 三模键盘",
+                  "order": 40, "kind": "keyboard"},
 }
 
 DEVICE_KINDS = ("mouse", "keyboard")
@@ -29,11 +33,12 @@ KIND_LABELS = {"mouse": "鼠标", "keyboard": "键盘"}
 
 def infer_kind(key: str, name: str = "") -> str:
     text = f"{key} {name}".lower()
-    if key.startswith("36B0") or "wave" in text or "keyboard" in text \
-            or "键盘" in text:
+    if key.startswith(("36B0", "1A2C")) or "wave" in text \
+            or "keyboard" in text or "键盘" in text:
         return "keyboard"
-    if key in ("3554:F517", "046D:C53F", "248A:60AB") or "mouse" in text \
-            or "aimouse" in text or "monster" in text or "鼠标" in text:
+    if key in ("3554:F517", "046D:C53F", "248A:60AB", "1EA7:0064") \
+            or "mouse" in text or "aimouse" in text or "monster" in text \
+            or "鼠标" in text:
         return "mouse"
     return "mouse"
 

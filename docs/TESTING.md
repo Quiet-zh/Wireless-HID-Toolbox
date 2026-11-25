@@ -8,21 +8,23 @@ python -m unittest discover -s tests -v
 
 不依赖真实鼠标/键盘，也不需要管理员权限。GUI 相关功能需要手动验收。
 
-当前：**50 个自动化用例**。
+当前：**80 个自动化用例**。
 
 ## 自动化覆盖
 
 | 文件 | 用例 | 覆盖内容 |
 |---|---:|---|
+| `test_aimouse_voice.py` | 16 | AiMouse ADPCM 解码、帧识别、分段、WAV 输出 |
+| `test_config.py` | 4 | 配置默认值、window 局部合并、保存回读、主题回退 |
 | `test_events.py` | 5 | Raw Input 鼠标按键/滚轮/键盘报文解析 |
-| `test_generic.py` | 12 | 多厂商协议帧、校验、解析、扫描辅助 |
+| `test_generic.py` | 17 | 多厂商协议帧、校验、解析、扫描辅助 |
 | `test_keyboard_view.py` | 3 | 104 键布局数量、边界、核心键位 |
 | `test_pmo.py` | 4 | PMO WAVE75 电量帧 |
 | `test_proto.py` | 8 | EWEADN 电量帧、电压曲线、异常帧 |
-| `test_registry.py` | 7 | 设备 key、名称、类型推断、删除/恢复 |
-| `test_config.py` | 4 | 配置默认值、window 局部合并、保存回读、主题回退 |
+| `test_registry.py` | 10 | 设备 key、名称、类型推断、删除/恢复 |
 | `test_theme.py` | 4 | 白天/黑夜配色映射与主色覆盖 |
 | `test_version_packaging.py` | 3 | 版本号、Windows 版本资源、打包模式 |
+| `test_voice_panel.py` | 6 | 语音窗口参数定义与配置回读 |
 
 ## 测试隔离
 

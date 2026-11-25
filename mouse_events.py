@@ -280,6 +280,8 @@ def list_test_devices() -> list[dict]:
         "046D:C53F": "mouse",
         "248A:60AB": "mouse",
         "2F4C:1006": "keyboard",
+        "1EA7:0064": "mouse",
+        "1A2C:7FFF": "keyboard",
     }
     known_label = {
         "3554:F517": "EWEADN 8K",
@@ -288,6 +290,8 @@ def list_test_devices() -> list[dict]:
         "046D:C53F": "罗技 G304 / Lightspeed",
         "248A:60AB": "Monster AiMouse",
         "2F4C:1006": "COLORFUL 键盘",
+        "1EA7:0064": "英菲克 F15 无线鼠标",
+        "1A2C:7FFF": "狼蛛 S99 三模键盘",
     }
 
     raw: dict[str, dict] = {}

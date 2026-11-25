@@ -1,13 +1,15 @@
 # Wireless HID Toolbox（2.4G 外设工具箱）
 
-当前版本：**v1.6.0**（更新记录见 [CHANGELOG.md](CHANGELOG.md)）
+当前版本：**v1.7.0**（更新记录见 [CHANGELOG.md](CHANGELOG.md)）
 
 Windows 10/11 的 2.4G 无线外设电量与 HID 调试工具箱。纯 Python 标准库 +
 `ctypes` + `tkinter`，运行时不依赖任何第三方库。
 
 - **电量**：EWEADN 8K、PMO WAVE75、罗技 G304、Monster AiMouse，以及协议表里的其他设备
 - **设备目录**：Monster AiMouse（`248A:60AB`）已登记，可在面板/托盘/测试面板显示，
-  并通过 `0xFF91` 私有口读取电量（实验性解析，见「支持的设备与协议」）
+  并通过 `0xFF91` 私有口读取电量（实验性解析，见「支持的设备与协议」）；
+  英菲克 F15 无线鼠标（`1EA7:0064`）与狼蛛 S99 三模键盘（`1A2C:7FFF`）
+  也已登记，当前只显示占位、不显示电量
 - **语音解码**：Monster AiMouse 长按语音键时，`0xFF91` 会回传 ADPCM 语音，
   `aimouse_voice.py` 可还原成 16kHz WAV（见「语音解码」）
 - **语音窗口**：AiMouse 卡片上的「🎤 语音」按钮，支持监测录音、列表播放/删除、
@@ -64,6 +66,13 @@ Windows 10/11 的 2.4G 无线外设电量与 HID 调试工具箱。纯 Python �
 > `0C 4D ?? 69 00 <电量> 04 01 00 4C`（偏移 5 为百分比）和不带电量的心跳帧
 > `0C 4D 05 67 00 4C ...`（已排除，避免误报 76%）。当前按用户实测约 100%
 > 校准，属实验性解析，只在 `248A:60AB` 上启用；休眠时回退到上次缓存。
+>
+> 英菲克 F15 无线鼠标（`1EA7:0064`，VID `0x1EA7` SHARKOON / PID `0x0064`）与
+> 狼蛛 S99 三模键盘（`1A2C:7FFF`，VID `0x1A2C` China Resource Semico /
+> PID `0x7FFF`，产品名 `2.4G Wireless Device`）已登记到设备目录，面板、托盘和
+> 测试面板都能按名称/类型识别。两者尚未收录私有电量协议，当前只显示占位卡片、
+> 不显示百分比；若设备暴露标准 Battery Strength Usage 会自动读到，否则需抓包
+> 确认报文后写入 `captured.json` 或新增协议读取函数（见「设备配置」）。
 >
 > EWEADN、PMO、罗技 G304、Monster AiMouse 在本机实测；其他协议来自公开协议文档/仓库的移植，
 > 已做单元测试，但建议接上设备后用 `generic_scan.py --list` / `--scan` 验证。
@@ -305,7 +314,9 @@ python app.py
   "3554:F517": {"name": "EWEADN 8K", "show": true, "tray": true, "order": 10},
   "36B0:WAVE75": {"name": "PMO WAVE75", "show": true, "tray": true, "order": 20},
   "248A:60AB": {"name": "Monster AiMouse", "show": true, "tray": true, "order": 25},
-  "046D:C53F": {"name": "罗技 G304 / Lightspeed", "show": true, "tray": true, "order": 30}
+  "1EA7:0064": {"name": "英菲克 F15 无线鼠标", "show": true, "tray": true, "order": 30},
+  "1A2C:7FFF": {"name": "狼蛛 S99 三模键盘", "show": true, "tray": true, "order": 40},
+  "046D:C53F": {"name": "罗技 G304 / Lightspeed", "show": true, "tray": true, "order": 50}
 }
 ```
 
