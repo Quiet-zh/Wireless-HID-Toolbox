@@ -55,6 +55,61 @@ def themed(color: str) -> str:
     return color
 
 
+def copy_to_clipboard(text: str, widget=None) -> bool:
+    """把文本写入系统剪贴板；Windows 用 ctypes 直写，失败回退 Tk。
+
+    用 Win32 API 而不是 tk.clipboard_append，是因为 Tk 是剪贴板所有者时，
+    面板窗口一关剪贴板内容就没了；直写系统剪贴板关闭窗口后仍可粘贴。
+    """
+    if not text:
+        return False
+    try:
+        import ctypes
+        user32 = ctypes.windll.user32
+        kernel32 = ctypes.windll.kernel32
+        user32.OpenClipboard.argtypes = (ctypes.c_void_p,)
+        user32.EmptyClipboard.argtypes = ()
+        user32.SetClipboardData.argtypes = (ctypes.c_uint, ctypes.c_void_p)
+        user32.SetClipboardData.restype = ctypes.c_void_p
+        user32.CloseClipboard.argtypes = ()
+        kernel32.GlobalAlloc.argtypes = (ctypes.c_uint, ctypes.c_size_t)
+        kernel32.GlobalAlloc.restype = ctypes.c_void_p
+        kernel32.GlobalLock.argtypes = (ctypes.c_void_p,)
+        kernel32.GlobalLock.restype = ctypes.c_void_p
+        kernel32.GlobalUnlock.argtypes = (ctypes.c_void_p,)
+        kernel32.GlobalFree.argtypes = (ctypes.c_void_p,)
+        if not user32.OpenClipboard(0):
+            return False
+        try:
+            user32.EmptyClipboard()
+            data = text.encode("utf-16-le") + b"\x00\x00"
+            handle = kernel32.GlobalAlloc(0x0002, len(data))  # GMEM_MOVEABLE
+            if not handle:
+                return False
+            ptr = kernel32.GlobalLock(handle)
+            if not ptr:
+                kernel32.GlobalFree(handle)
+                return False
+            ctypes.memmove(ptr, data, len(data))
+            kernel32.GlobalUnlock(handle)
+            # SetClipboardData 成功后系统接管 handle，不能再 GlobalFree
+            if not user32.SetClipboardData(13, handle):  # CF_UNICODETEXT
+                kernel32.GlobalFree(handle)
+                return False
+            return True
+        finally:
+            user32.CloseClipboard()
+    except Exception:
+        if widget is not None:
+            try:
+                widget.clipboard_clear()
+                widget.clipboard_append(text)
+                return True
+            except Exception:
+                pass
+    return False
+
+
 def interval_label(seconds: int) -> str:
     for label, value in INTERVALS.items():
         if value == seconds:
@@ -75,13 +130,16 @@ class DeviceCard(tk.Frame):
                          highlightbackground=CARD_EDGE, highlightthickness=1)
         self.grid_propagate(False)
         self.key = snap.key
+        self.name = snap.name
+        self._copy_job = None
 
         head = tk.Frame(self, bg=CARD)
         head.pack(fill="x", padx=16, pady=(12, 0))
         self.name_label = tk.Label(head, text=snap.name, bg=CARD, fg=TEXT,
                                    font=("Microsoft YaHei UI", 13, "bold"),
-                                   anchor="w")
+                                   anchor="w", cursor="hand2")
         self.name_label.pack(side="left")
+        self.name_label.bind("<Button-1>", self._copy_name)
         self.status_label = tk.Label(head, text="", bg=CARD, fg=FAINT,
                                      font=("Microsoft YaHei UI", 9), anchor="e")
         self.status_label.pack(side="right")
@@ -133,9 +191,34 @@ class DeviceCard(tk.Frame):
                                    font=("Microsoft YaHei UI", 8), anchor="w")
         self.time_label.pack(fill="x", padx=16, pady=(4, 0))
 
+    def _copy_name(self, _event=None) -> None:
+        """点击设备名：复制到系统剪贴板，短暂显示反馈。"""
+        current = self.name_label.cget("text")
+        if not current or current == "✓ 已复制":
+            return
+        if not copy_to_clipboard(current, self):
+            return
+        self.name_label.configure(text="✓ 已复制", fg=themed(GREEN))
+        if self._copy_job is not None:
+            try:
+                self.after_cancel(self._copy_job)
+            except tk.TclError:
+                pass
+        self._copy_job = self.after(900, self._restore_name)
+
+    def _restore_name(self) -> None:
+        self._copy_job = None
+        try:
+            if self.winfo_exists():
+                self.name_label.configure(text=self.name, fg=themed(TEXT))
+        except tk.TclError:
+            pass
+
     def update_reading(self, snap: dr.DeviceSnapshot) -> None:
         self.key = snap.key
-        self.name_label.configure(text=snap.name)
+        self.name = snap.name
+        if self._copy_job is None:
+            self.name_label.configure(text=snap.name)
         self.sub_label.configure(
             text=f"{snap.key} · {snap.source or '等待设备'}")
         if snap.present:
