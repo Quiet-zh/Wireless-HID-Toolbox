@@ -102,7 +102,9 @@ PARAM_DEFS = [
      1, 0, 1, 1, "bool"),
     ("max_seconds", "单次最长录制", "超过该秒数自动结束并保存",
      30, 5, 120, 5, "int"),
-    ("save_dir", "音频保存目录", "录制文件存放位置",
+    ("save_audio", "保存语音文件", "1=录音保存为 WAV；0=只转文字不保存",
+     1, 0, 1, 1, "bool"),
+    ("save_dir", "音频保存目录", "录制文件存放位置（保存语音开启时有效）",
      DEFAULT_SAVE, None, None, None, "path"),
     ("model_dir", "识别模型目录", "Vosk 中文模型所在目录",
      DEFAULT_MODEL, None, None, None, "path"),
@@ -322,6 +324,22 @@ class AsrEngine:
                 text = ""
             self._rec = None
             return text
+
+    def transcribe_samples(self, samples: list[int]) -> Optional[str]:
+        """对内存中的 PCM 样本做一次性识别（不保存 WAV 时使用）。"""
+        if not self.available() or not samples:
+            return None
+        try:
+            from vosk import KaldiRecognizer
+            rec = self._make_rec(KaldiRecognizer)
+            pcm = av.samples_to_pcm16(samples)
+            for i in range(0, len(pcm), 4000):
+                rec.AcceptWaveform(pcm[i:i + 4000])
+            return normalize_asr_text(
+                json.loads(rec.FinalResult()).get("text", ""))
+        except Exception as exc:
+            self.error = str(exc)
+            return None
 
     def transcribe_file(self, wav_path: str) -> Optional[str]:
         """对已有 WAV 做一次性识别。"""
@@ -965,19 +983,25 @@ class VoiceWindow(tk.Toplevel):
         strength = int(self.cfg.get("denoise", 0) or 0)
         if strength > 0:
             samples = self._denoise(samples, strength)
-        save_dir = self.cfg.get("save_dir") or DEFAULT_SAVE
-        os.makedirs(save_dir, exist_ok=True)
-        stamp = time.strftime("%Y%m%d_%H%M%S")
-        path = os.path.join(save_dir, "voice_%s.wav" % stamp)
-        av.save_wav(path, samples)
-        self._refresh_list()
-        self.selected = path
-        self._sync_selection()
         real = len(samples) / av.SAMPLE_RATE
-        self.meter_text.configure(text="%.1f 秒 · 已保存" % real)
-        self.status.configure(
-            text="已保存 · %.1f 秒（%s）" % (real, reason or "正常结束"),
-            fg=themed(GREEN))
+        save_audio = bool(int(self.cfg.get("save_audio", 1) or 0))
+        if save_audio:
+            save_dir = self.cfg.get("save_dir") or DEFAULT_SAVE
+            os.makedirs(save_dir, exist_ok=True)
+            stamp = time.strftime("%Y%m%d_%H%M%S")
+            path = os.path.join(save_dir, "voice_%s.wav" % stamp)
+            av.save_wav(path, samples)
+            self._refresh_list()
+            self.selected = path
+            self._sync_selection()
+            self.meter_text.configure(text="%.1f 秒 · 已保存" % real)
+            self.status.configure(
+                text="已保存 · %.1f 秒（%s）" % (real, reason or "正常结束"),
+                fg=themed(GREEN))
+        else:
+            self.meter_text.configure(text="%.1f 秒 · 未保存" % real)
+            self.status.configure(
+                text="已录制 %.1f 秒（不保存语音）" % real, fg=themed(GREEN))
         if final:
             self._publish_text(final)
         elif self._partial:
@@ -990,10 +1014,27 @@ class VoiceWindow(tk.Toplevel):
             self.asr_hint.configure(
                 text=("流式未得到文字，已回退整段识别" if had_stream
                       else "松开后整段识别中…"))
-            self._transcribe(allow_clipboard=True)
+            if save_audio:
+                self._transcribe(allow_clipboard=True)
+            else:
+                # 没存 WAV：直接用刚录的 PCM 做整段识别（纯本地 Vosk）
+                self._transcribe_samples(samples)
         else:
             self.asr_hint.configure(
                 text="本段未识别到文字（自动转文字已关闭）")
+
+    def _transcribe_samples(self, samples: list[int]) -> None:
+        """不保存 WAV 时的整段识别：内存 PCM → Vosk → asr_text 事件。"""
+        def work():
+            text = (self.asr.transcribe_samples(samples)
+                    if self.asr.available() else None)
+            if text:
+                self.events.put(("asr_text", text))
+                self.events.put(("asr_backend", "Vosk（内存音频）"))
+            else:
+                self.events.put(("asr_unavailable",
+                                 "整段识别未得到文字（未保存语音，仅本地 Vosk）"))
+        threading.Thread(target=work, daemon=True).start()
 
     def _denoise(self, samples: list[int], strength: int) -> list[int]:
         try:
@@ -1212,7 +1253,11 @@ class VoiceWindow(tk.Toplevel):
 
     def _transcribe(self, allow_clipboard: bool = False) -> None:
         if not self.selected or not os.path.exists(self.selected):
-            messagebox.showinfo("提示", "请先选中一条录音", parent=self)
+            hint = ("当前「保存语音」已关闭，本轮没有可转文字的录音文件。\n"
+                    "请在设置里开启「保存语音」，或直接按住语音键重新录制。"
+                    if not bool(int(self.cfg.get("save_audio", 1) or 0))
+                    else "请先选中一条录音")
+            messagebox.showinfo("提示", hint, parent=self)
             return
         chain = self._backend_chain(allow_clipboard)
         if not chain:

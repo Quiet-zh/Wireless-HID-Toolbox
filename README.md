@@ -1,6 +1,6 @@
 # Wireless HID Toolbox（2.4G 外设工具箱）
 
-当前版本：**v1.18.1**（更新记录见 [CHANGELOG.md](CHANGELOG.md)）
+当前版本：**v1.19.0**（更新记录见 [CHANGELOG.md](CHANGELOG.md)）
 
 Windows 10/11 的 2.4G 无线外设电量与 HID 调试工具箱。纯 Python 标准库 +
 `ctypes` + `tkinter`，运行时不依赖任何第三方库。
@@ -306,6 +306,16 @@ av.save_wav("voice.wav", av.normalize(samples))
 - 音量条与部分结果约 10Hz 刷新，事件队列单轮上限 120 条，避免音频帧洪泛
   把收尾事件饿死
 
+### 保存语音（`save_audio`）
+
+默认 **1（保存）**：录音结束后把 WAV 存到「音频保存目录」，窗口列表可回看、
+可点「📝 转文字」重新识别。设为 **0** 后：
+
+- 录音**不再写入 WAV**，状态显示「已录制 N 秒（不保存语音）」
+- 转文字**照常工作**：流式结果直接用；整段模式用内存 PCM 走本地 Vosk 识别
+  （`transcribe_samples()`），结果与文件识别一致
+- 手动「📝 转文字」会提示当前没有可转文字的录音文件
+
 ### 转文字模式（`stream_asr`）
 
 设置里「流式转文字」默认 **1**：
@@ -487,7 +497,7 @@ python tray_app.py --quit
 python -m unittest discover -s tests -v
 ```
 
-共 **238** 个用例：
+共 **248** 个用例：
 
 - 8 个鼠标协议/电压曲线
 - 5 个 Raw Input 事件解析
@@ -515,6 +525,7 @@ python -m unittest discover -s tests -v
 - 12 个刷新间隔输入解析 / 范围 / 分钟显示 / 保存生效
 - 6 个未连接设备默认隐藏（面板/托盘/启动占位/设置开关）
 - 5 个 Ctrl+C 中断不刷 traceback（vosk 导入锁 / 入口）
+- 10 个保存语音开关（默认开、关闭不写 WAV、内存识别兜底）
 - 8 个设备目录/类型/删除恢复
 - 3 个 104 键布局数据
 - 4 个配置默认值/合并/主题回退
