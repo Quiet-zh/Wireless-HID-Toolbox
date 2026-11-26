@@ -92,6 +92,9 @@ PARAM_DEFS = [
      1, 0, 1, 1, "bool"),
     ("stream_asr", "流式转文字", "1=边说边转（实时显示）；0=松开语音键后整段识别一次",
      1, 0, 1, 1, "bool"),
+    ("asr_refine", "收尾高精度校正",
+     "1=松手后用 SenseVoice 再识别一次定稿（约 0.2 秒，更准、带标点）；0=只用流式结果",
+     1, 0, 1, 1, "bool"),
     ("max_seconds", "单次最长录制", "超过该秒数自动结束并保存",
      30, 5, 120, 5, "int"),
     ("save_audio", "保存语音文件", "1=录音保存为 WAV；0=只转文字不保存",
@@ -883,10 +886,20 @@ class VoiceWindow(tk.Toplevel):
             # 仅词表变化不需要重建引擎（sherpa 忽略词表，Vosk 下次 begin 生效）
             self.asr.grammar = self.cfg.get("asr_grammar", "")
         if warm:
-            # 流式模式只需加载流式模型；两个 sherpa 模型同时驻留约 400MB
-            want_stream = bool(int(self.cfg.get("stream_asr", 1) or 0))
+            # 决定预加载哪些模型：
+            #   流式 + 精修  → 两个都加载（收尾要用 SenseVoice 定稿）
+            #   流式，不精修 → 只加载流式（省下 SenseVoice 约 230MB 常驻内存）
+            #   整段模式     → 只加载整段
+            streaming = bool(int(self.cfg.get("stream_asr", 1) or 0))
+            refine = bool(int(self.cfg.get("asr_refine", 1) or 0))
+            if not streaming:
+                target = False
+            elif refine:
+                target = None
+            else:
+                target = True
             eng = self.asr
-            threading.Thread(target=eng.preload, args=(want_stream,),
+            threading.Thread(target=eng.preload, args=(target,),
                              daemon=True).start()
 
     def _start_monitor(self) -> None:
@@ -937,6 +950,18 @@ class VoiceWindow(tk.Toplevel):
                                   fg=themed(GREEN))
         elif kind == "asr_unavailable":
             self.asr_hint.configure(text=item[1])
+        elif kind == "asr_refine":
+            fallback, better, err = item[1]
+            if err:
+                self.asr_hint.configure(text="高精度校正失败：%s" % err)
+            elif better and better != fallback:
+                # 只在确实不同才改，避免无谓地重排已键入的文字
+                self._publish_text(better)
+                self.asr_hint.configure(
+                    text="已用 SenseVoice 校正：%s" % better)
+            elif better:
+                self.asr_hint.configure(
+                    text="已用 SenseVoice 复核（与流式一致）：%s" % better)
 
     def _poll(self) -> None:
         try:
@@ -1052,8 +1077,7 @@ class VoiceWindow(tk.Toplevel):
         self._asr_active = False
         self._stream_decoder = None        # 下一段录音重建，避免状态串段
         if not final:
-            self._reset_stream_typing()    # 本段没有最终结果，清空流式键入状态
-        self.meter.coords(self.meter_fill, 0, 0, 0, 16)
+            self._reset_stream_typing()    # 本段没有最终结果，清空流式键入状态        self.meter.coords(self.meter_fill, 0, 0, 0, 16)
         if not frames:
             self.status.configure(text="没录到音频（%s）" % (reason or "无数据"),
                                   fg=themed(AMBER))
@@ -1089,6 +1113,8 @@ class VoiceWindow(tk.Toplevel):
                 text="已录制 %.1f 秒（不保存语音）" % real, fg=themed(GREEN))
         if final:
             self._publish_text(final)
+            # 流式结果先出来（用户马上看到），再后台用高精度模型定稿
+            self._refine_async(final)
         elif self._partial:
             self._set_text(self._partial)
         # 有最终结果就绝不重复识别；没结果且自动转文字开着才回退整段识别
@@ -1107,6 +1133,33 @@ class VoiceWindow(tk.Toplevel):
         else:
             self.asr_hint.configure(
                 text="本段未识别到文字（自动转文字已关闭）")
+
+    def _refine_async(self, fallback: str) -> None:
+        """流式出结果后用高精度整段模型再识别一次，定稿更准的文本。
+
+        SenseVoice 预热后一次约 150~200ms，比流式结果只晚一点点；
+        放后台线程是防首次加载（约 2.6s）卡住界面。
+        """
+        eng = self.asr
+        if getattr(eng, "name", "vosk") != "sherpa":
+            return
+        if not bool(int(self.cfg.get("asr_refine", 1) or 0)):
+            return
+        if not getattr(eng, "offline_ready", lambda: False)():
+            return
+
+        def work():
+            try:
+                pcm = eng.take_pcm()
+                if not pcm:
+                    return
+                better = eng.transcribe_samples(av.pcm16_to_samples(pcm))
+            except Exception as exc:
+                self.events.put(("asr_refine", (fallback, "", str(exc))))
+                return
+            self.events.put(("asr_refine", (fallback, better or "", "")))
+
+        threading.Thread(target=work, daemon=True).start()
 
     def _transcribe_samples(self, samples: list[int]) -> None:
         """不保存 WAV 时的整段识别：内存 PCM → 本地引擎 → asr_text 事件。"""

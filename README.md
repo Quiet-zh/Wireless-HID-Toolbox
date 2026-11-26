@@ -23,8 +23,10 @@ Windows 10/11 的 2.4G 无线外设电量与 HID 调试工具箱。纯 Python �
 - **语音窗口**：魔声 AI 垂直鼠标卡片上的「🎤 语音」按钮，支持监测录音、列表播放/删除、
   实时转文字与参数设置；松开语音键立即收尾出结果，识别不重复跑（见「语音窗口」）
 - **转文字（默认纯本地）**：默认引擎为 **sherpa-onnx**（流式 Paraformer 边说边出字 +
-  SenseVoice 整段高精度），`local_only=1` 时完全不联网、不读剪贴板；
+  SenseVoice 收尾定稿），`local_only=1` 时完全不联网、不读剪贴板；
   未装 sherpa 时自动回退 Vosk，也支持云端 ASR / 剪贴板桥接（见「语音窗口」）
+- **收尾高精度校正**：松手后先用流式结果立刻显示，再用 SenseVoice 重识别一次
+  定稿（约 0.17 秒），实测把「刺试语音输入语二三」纠正成「测试语音输入123。」
 - **前导静音门控**：设备按下语音键后有 1~1.5 秒纯底噪，这段静音会让模型在句首
   「听出」不存在的字；按能量门控裁掉后同一段音频准确率明显提升（见「识别准确率」）
 - **主界面**：可选设备卡片、统一字段、托盘图标逐设备开关、最小化到托盘；
@@ -299,6 +301,7 @@ av.save_wav("voice.wav", av.normalize(samples))
 | `local_only` | 纯本地模式：1=只用本地引擎，完全不联网/不读剪贴板 | **1** |
 | `asr_grammar` | 识别词表（可选），逗号分隔；留空=通用识别 | 空 |
 | `stream_asr` | 流式转文字：1=边说边转；0=松开语音键后整段识别一次 | **1** |
+| `asr_refine` | 收尾高精度校正：1=松手后再用 SenseVoice 定稿（约 0.17s） | **1** |
 | `voice_typing` | 语音输入到焦点：1=识别后把文字键入当前焦点输入框 | 0 |
 
 ### 响应与收尾
@@ -349,15 +352,21 @@ sherpa 引擎按模式自动选模型，两条路径都在 `sherpa_model_dir` �
 | 场景 | 模型 | 特点 |
 | --- | --- | --- |
 | 流式（`stream_asr=1`） | `streaming-paraformer-bilingual-zh-en` | 边说边出字，首字延迟几十毫秒，中英混说 |
-| 整段（`stream_asr=0`、手动转文字） | `sense-voice-zh-en-ja-ko-yue` | 中文准确率更高，自带标点与 ITN（数字转阿拉伯数字） |
+| 收尾定稿（`asr_refine=1`） | `sense-voice-zh-en-ja-ko-yue` | 松手后再识别一次，约 0.17s，带标点与 ITN |
+| 整段（`stream_asr=0`、手动转文字） | `sense-voice-zh-en-ja-ko-yue` | 中文准确率最高，自带标点与 ITN |
 
-准备模型（一条命令，走 hf-mirror，下到 `.tmp` 再改名，可反复重跑续传）：
+准备模型（一条命令，走 hf-mirror，多线程分段下载，可反复重跑续传）：
 
 ```bash
 python tools/download_models.py            # 流式 + 整段都下（约 460 MB）
 python tools/download_models.py --stream   # 只下流式 paraformer（约 226 MB）
 python tools/download_models.py --offline  # 只下 SenseVoice（约 229 MB）
+python tools/download_models.py --jobs 8   # 加并发连接数（默认 6）
 ```
+
+> hf-mirror 单连接常被限到几十 KB/s，多连接能叠加带宽（实测 6 并发
+> 从 18 KB/s 提到 1.4 MB/s）。文件先落到 `.tmp` 与 `.partN` 分片，
+> 全部校验通过才改名，中途断掉不会留下「看着能用其实是半截」的模型。
 
 装依赖：`python -m pip install sherpa-onnx`（提供 cp313/cp315 等预编译 wheel，
 不需要 numpy）。**没装也不影响使用**——面板会自动回退 Vosk。
@@ -382,9 +391,13 @@ python tools/download_models.py --offline  # 只下 SenseVoice（约 229 MB）
 | Vosk 大模型 原始 | 29.9s | 2.0s | 是语音输入一二三 |
 | Vosk 大模型 + 门控 | 29.9s | 1.5s | **测试语音输入一二三** ✅ |
 | sherpa 流式 原始 | 1.3s | 0.36s | 请世是语音输入与二 ❌ |
-| sherpa 流式 + 门控 | 1.3s | 0.25s | 刺试语音输入语二三（7/8 字）✅ |
+| sherpa 流式 + 门控 | 1.3s | 0.27s | 刺试语音输入语二三（7/8 字）|
+| **sherpa 流式 + 门控 + 收尾精修** | 1.3s | 0.27s + **0.17s** | **测试语音输入123。** ✅ |
+| sherpa 整段 SenseVoice | 2.6s | 0.15s | **测试语音输入123。** ✅ |
 
-sherpa 流式以约 1/10 的模型体积、1/12 的耗时达到与 Vosk 大模型同级的效果。
+结论：**门控**解决「句首假字」，**SenseVoice 定稿**解决「同音字选错」。
+实时反馈走流式（0.27s 就开始出字），最终文本用 SenseVoice 再识别一次
+（0.17s），加起来仍比 Vosk 大模型快一个数量级，模型体积只有它的 1/10。
 想自己复核可跑 `python tools/compare_asr.py`（用 Frida 抓包还原真实音频）。
 
 **找录音文件**：语音窗口底部「📁 目录」按钮可在资源管理器中直接打开当前

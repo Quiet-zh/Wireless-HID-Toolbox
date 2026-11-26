@@ -8,7 +8,7 @@ python -m unittest discover -s tests -v
 
 不依赖真实鼠标/键盘，也不需要管理员权限。GUI 相关功能需要手动验收。
 
-当前：**329 个自动化用例**。
+当前：**344 个自动化用例**。
 
 > 需要 `tkinter`（GUI 相关用例会自动跳过无 tkinter 的环境），
 > 不需要 vosk / sherpa-onnx / websockets / numpy 等可选依赖——
@@ -47,8 +47,9 @@ python -m unittest discover -s tests -v
 | `test_voice_typing.py` | 17 | Unicode INPUT 构造、surrogate、焦点过滤、开关分支 |
 | `test_version_packaging.py` | 3 | 版本号、Windows 版本资源、打包模式 |
 | `test_voice_panel.py` | 6 | 语音窗口参数定义与配置回读 |
-| `test_sherpa_asr.py` | 42 | sherpa 引擎：模型探测/int8 优先、就绪判定、缺模型不崩、音频预处理（多声道/8bit/重采样）、引擎工厂回退、Vosk/sherpa 公共属性 |
-| `test_onset_gate.py` | 22 | 前导静音门控：起点检测、回退保弱起、全静音不裁、max_wait 放行、reset、真实帧回归 |
+| `test_sherpa_asr.py` | 51 | sherpa 引擎：模型探测/int8 优先、就绪判定、缺模型不崩、音频预处理（多声道/8bit/重采样）、引擎工厂回退、Vosk/sherpa 公共属性 |
+| `test_onset_gate.py` | 22 | 前导静音门控：起点检测、回退保弱起、全静音不裁、max_wait 放行、reset、flush、真实帧回归 |
+| `test_sherpa_integration.py` | 6 | 真实录音 + 真实模型的端到端：流式链路出字、门控只丢静音、收尾精修定稿（缺模型自动 skip） |
 
 独立验证工具（不计入自动化用例）：
 

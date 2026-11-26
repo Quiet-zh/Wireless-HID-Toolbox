@@ -71,7 +71,8 @@ sherpa 缺依赖或模型时自动回退 Vosk，不会静默降级。
 | `sherpa-onnx-streaming-paraformer-bilingual-zh-en` | 226MB | 流式，边说边出字，中英混说 |
 | `sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17` | 229MB | 整段，中文准确率更高，带标点与 ITN |
 
-一键下载：`python tools/download_models.py`（走 hf-mirror，`.tmp` 后改名，可重跑续传）。
+一键下载：`python tools/download_models.py`（走 hf-mirror，多线程分段；
+单连接被限速时加 `--jobs 8`；`.tmp`/`.partN` 校验通过才改名，可重跑续传）。
 
 Vosk 方案：`vosk-model-small-cn-0.22`（42MB）。
 更强的 `vosk-model-cn-0.22`（1.3GB）可直接把 `model_dir` 指过去；
@@ -96,7 +97,7 @@ Vosk 方案：`vosk-model-small-cn-0.22`（42MB）。
 
 ## 4. 语音窗口参数速查
 
-设置（⚙）里共 **15 项**，每项都有输入框；数值项另有左右加减按钮，
+设置（⚙）里共 **16 项**，每项都有输入框；数值项另有左右加减按钮，
 **点「保存」才生效**。配置文件：`%APPDATA%\ExtBatteryTray\voice_config.json`。
 
 | 参数 | 默认 | 说明 |
@@ -114,6 +115,7 @@ Vosk 方案：`vosk-model-small-cn-0.22`（42MB）。
 | `local_only` | **1** | 1 = 只用本地引擎，完全不联网/不读剪贴板 |
 | `asr_grammar` | 空 | 逗号分隔候选词，启用词表约束（仅 Vosk） |
 | `stream_asr` | **1** | 1 = 边说边转（流式）；0 = 松开后整段识别一次 |
+| `asr_refine` | **1** | 1 = 松手后再用 SenseVoice 定稿（约 0.17s） |
 | `voice_typing` | 0 | 1 = 识别结果自动键入当前焦点输入框 |
 
 **词表实测**（`local_decoded.wav`，用户说「测试语音输入一二三」）：
@@ -148,7 +150,7 @@ Vosk 方案：`vosk-model-small-cn-0.22`（42MB）。
 | `tools/download_models.py` | 下载 sherpa-onnx 中文模型（hf-mirror，可重跑续传） |
 | `tools/compare_asr.py` | 用真实抓包对比 sherpa / Vosk 的识别结果与耗时 |
 | `docs/AiMouse-RE-Notes.md` | 完整逆向过程、反汇编证据、协议细节 |
-| `tests/` | 329 个自动化用例 |
+| `tests/` | 344 个自动化用例 |
 
 ## 6. 验证与自检
 
@@ -202,3 +204,4 @@ python main.py --version
 | 1.20.0 | 流式转写时同步流式键入焦点输入框（增量 + 退格纠正） |
 | 1.20.1 | 修复流式输入完成后最终结果重复输入一次 |
 | **1.21.0** | **前导静音门控（准确率最大杠杆）+ 集成 sherpa-onnx 引擎（流式 Paraformer / 整段 SenseVoice），Vosk 保留可回退** |
+| **1.22.0** | **收尾高精度校正：流式实时出字 + SenseVoice 定稿（实测 7/8 字 → 全对），下载工具改多线程分段** |

@@ -298,6 +298,89 @@ class TestMakeAsrEngine(_TmpModels):
         self.assertEqual(vp.asr_engine_key(cfg), vp.asr_engine_key(dict(cfg)))
 
 
+class TestRefine(unittest.TestCase):
+    """收尾精修：流式出结果后用 SenseVoice 定稿。"""
+
+    def _window(self, name="sherpa", refine=1, offline=True, pcm=b"\x01\x02"):
+        win = vp.VoiceWindow.__new__(vp.VoiceWindow)
+        eng = mock.Mock()
+        eng.name = name
+        eng.offline_ready.return_value = offline
+        eng.take_pcm.return_value = pcm
+        eng.transcribe_samples.return_value = "测试语音输入123。"
+        win.asr = eng
+        win.cfg = {"asr_refine": refine}
+        win.events = mock.Mock()
+        return win, eng
+
+    def test_skips_vosk_engine(self):
+        win, eng = self._window(name="vosk")
+        win._refine_async("刺试语音输入语二三")
+        eng.take_pcm.assert_not_called()
+        win.events.put.assert_not_called()
+
+    def test_skips_when_disabled(self):
+        win, eng = self._window(refine=0)
+        win._refine_async("x")
+        eng.take_pcm.assert_not_called()
+
+    def test_skips_without_offline_model(self):
+        win, eng = self._window(offline=False)
+        win._refine_async("x")
+        eng.take_pcm.assert_not_called()
+
+    def test_emits_event_on_success(self):
+        win, eng = self._window()
+        win._refine_async("刺试语音输入语二三")
+        kind, payload = win.events.put.call_args[0][0]
+        self.assertEqual(kind, "asr_refine")
+        fallback, better, err = payload
+        self.assertEqual(fallback, "刺试语音输入语二三")
+        self.assertEqual(better, "测试语音输入123。")
+        self.assertEqual(err, "")
+
+    def test_emits_event_on_error(self):
+        win, eng = self._window()
+        eng.transcribe_samples.side_effect = RuntimeError("boom")
+        win._refine_async("x")
+        kind, payload = win.events.put.call_args[0][0]
+        self.assertEqual(kind, "asr_refine")
+        self.assertIn("boom", payload[2])
+
+    def test_skips_when_no_pcm(self):
+        win, eng = self._window(pcm=b"")
+        win._refine_async("x")
+        win.events.put.assert_not_called()
+
+
+class TestDispatchRefineEvent(unittest.TestCase):
+    """收尾精修结果到达时：不同才覆盖，相同只更新提示。"""
+
+    def _window(self):
+        win = vp.VoiceWindow.__new__(vp.VoiceWindow)
+        win.asr_hint = mock.Mock()
+        win._publish_text = mock.Mock()
+        return win
+
+    def test_overwrites_when_different(self):
+        win = self._window()
+        win._dispatch(("asr_refine", ("刺试语音输入语二三", "测试语音输入123。", "")))
+        win._publish_text.assert_called_once_with("测试语音输入123。")
+        self.assertIn("校正", win.asr_hint.configure.call_args[1]["text"])
+
+    def test_no_republish_when_same(self):
+        win = self._window()
+        win._dispatch(("asr_refine", ("测试语音输入123。", "测试语音输入123。", "")))
+        win._publish_text.assert_not_called()
+        self.assertIn("复核", win.asr_hint.configure.call_args[1]["text"])
+
+    def test_reports_error(self):
+        win = self._window()
+        win._dispatch(("asr_refine", ("x", "", "boom")))
+        win._publish_text.assert_not_called()
+        self.assertIn("boom", win.asr_hint.configure.call_args[1]["text"])
+
+
 class TestVoskEngineNames(unittest.TestCase):
     def test_label_and_grammar(self):
         e = vp.AsrEngine("whatever/vosk-model-small-cn-0.22")
