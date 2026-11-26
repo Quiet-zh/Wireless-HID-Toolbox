@@ -113,8 +113,7 @@ class TestFinalCorrection(unittest.TestCase):
         with mock.patch.object(vp.vt, "send_inputs", return_value=True) as send, \
                 mock.patch.object(vp.vt, "type_text") as typ:
             win._publish_text("测试语音输入")
-        send.assert_called_once()
-        self.assertEqual(len(send.call_args[0][0]), 0)   # 0 次退格
+        send.assert_not_called()          # 完全一致无需退格，也不重输
         typ.assert_not_called()
 
     def test_corrects_tail(self):
@@ -127,6 +126,28 @@ class TestFinalCorrection(unittest.TestCase):
         self.assertEqual(len(send.call_args[0][0]), 4)   # 退 2 字 × (down,up)
         typ.assert_called_once_with("语音", TARGET)
         win._set_text.assert_called_once_with("测试语音")
+
+    def test_exact_match_does_not_type_twice(self):
+        """核心回归：流式已完整键入且最终结果一致 → 不能再整段输入一次。"""
+        win = _window(1, TARGET)
+        win._typed_partial = "测试语音输入"
+        with mock.patch.object(vp.vt, "send_inputs") as send, \
+                mock.patch.object(vp.vt, "type_text",
+                                  return_value=(True, "ok")) as typ:
+            win._publish_text("测试语音输入")
+        send.assert_not_called()          # 退格数为 0，不该调用 send_inputs
+        typ.assert_not_called()           # 绝不能重复键入
+
+    def test_prefix_growth_only_types_suffix(self):
+        """流式键入了「测试」，最终是「测试语音」→ 只补「语音」，不整段。"""
+        win = _window(1, TARGET)
+        win._typed_partial = "测试"
+        with mock.patch.object(vp.vt, "send_inputs") as send, \
+                mock.patch.object(vp.vt, "type_text",
+                                  return_value=(True, "ok")) as typ:
+            win._publish_text("测试语音")
+        send.assert_not_called()
+        typ.assert_called_once_with("语音", TARGET)
 
     def test_backspace_failure_retypes_full(self):
         win = _window(1, TARGET)

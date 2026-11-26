@@ -8,7 +8,7 @@ python -m unittest discover -s tests -v
 
 不依赖真实鼠标/键盘，也不需要管理员权限。GUI 相关功能需要手动验收。
 
-当前：**263 个自动化用例**。
+当前：**265 个自动化用例**。
 
 > 需要 `tkinter`（GUI 相关用例会自动跳过无 tkinter 的环境），
 > 不需要 vosk / websockets / numpy 等可选依赖。

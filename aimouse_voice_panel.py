@@ -1132,7 +1132,11 @@ class VoiceWindow(tk.Toplevel):
                     break
                 common += 1
             backspaces = len(typed) - common
-            if vt.send_inputs(vt.build_backspace_inputs(backspaces)):
+            # 退格数为 0（流式输入已是最终结果）时 send_inputs([]) 会返回
+            # False，不能据此判定「纠正失败」而整段重输 —— 那样会输入两次
+            if backspaces == 0:
+                to_type = value[common:]
+            elif vt.send_inputs(vt.build_backspace_inputs(backspaces)):
                 to_type = value[common:]
             else:
                 to_type = value          # 退格失败，退回整段键入

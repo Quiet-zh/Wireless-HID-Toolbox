@@ -108,7 +108,7 @@
 | `voice_typing.py` | 焦点捕获 + `SendInput` Unicode 键入（语音输入到任意输入框）、退格 |
 | `tools/verify_local_decode.py` | 独立验证纯本地解码链路（零依赖） |
 | `docs/AiMouse-RE-Notes.md` | 完整逆向过程、反汇编证据、协议细节 |
-| `tests/` | 263 个自动化用例 |
+| `tests/` | 265 个自动化用例 |
 
 ## 6. 验证与自检
 
@@ -154,3 +154,4 @@ python main.py --version
 | 1.18.1 | Ctrl+C 撞上 vosk 导入锁时安静退出、不刷 traceback |
 | **1.19.0** | **保存语音开关（默认开），关闭后不写 WAV 但仍能转文字** |
 | 1.20.0 | 流式转写时同步流式键入焦点输入框（增量 + 退格纠正） |
+| 1.20.1 | 修复流式输入完成后最终结果重复输入一次 |
