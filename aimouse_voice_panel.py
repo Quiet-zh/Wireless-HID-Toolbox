@@ -55,6 +55,25 @@ DEFAULT_SAVE = os.path.join(tc.RUNTIME_DIR, "voice")
 _MODEL_CACHE: dict[str, object] = {}
 _MODEL_LOCK = threading.Lock()
 _VOSK_QUIET = False
+_CJK_CHAR = r"[\u3400-\u4DBF\u4E00-\u9FFF\uF900-\uFAFF]"
+
+
+def normalize_asr_text(text: str) -> str:
+    """规整识别结果：去掉中文词之间的空格，英文单词间空格保留。
+
+    Vosk 中文模型把 ``text`` 按词用空格拼接（「测试 语音 输入 一二三」）；
+    语音输入场景需要连续文本。中文与数字之间的空格也一并去掉。
+    """
+    if not text:
+        return ""
+    # CJK 前后的空格一律去掉（「测试 语音」/「语音 123」/「123 输入」）
+    text = re.sub(rf"(?<={_CJK_CHAR})\s+(?=\S)", "", text)
+    text = re.sub(rf"(?<=\S)\s+(?={_CJK_CHAR})", "", text)
+    # 数字与字母、数字与数字之间的空格也去掉（「ABC 123」→「ABC123」）
+    text = re.sub(r"(?<=\d)\s+(?=[A-Za-z0-9])", "", text)
+    text = re.sub(r"(?<=[A-Za-z0-9])\s+(?=\d)", "", text)
+    # 英文单词之间的空格保留（「hello world」原样）
+    return text.strip()
 
 
 def _quiet_vosk() -> None:
@@ -282,7 +301,8 @@ class AsrEngine:
             if self._rec is None:
                 return ""
             try:
-                return json.loads(self._rec.PartialResult()).get("partial", "")
+                return normalize_asr_text(
+                    json.loads(self._rec.PartialResult()).get("partial", ""))
             except Exception:
                 return ""
 
@@ -291,7 +311,8 @@ class AsrEngine:
             if self._rec is None:
                 return ""
             try:
-                text = json.loads(self._rec.FinalResult()).get("text", "")
+                text = normalize_asr_text(
+                    json.loads(self._rec.FinalResult()).get("text", ""))
             except Exception:
                 text = ""
             self._rec = None
@@ -310,7 +331,8 @@ class AsrEngine:
                     if not data:
                         break
                     rec.AcceptWaveform(data)
-            return json.loads(rec.FinalResult()).get("text", "")
+            return normalize_asr_text(
+                json.loads(rec.FinalResult()).get("text", ""))
         except Exception as exc:
             self.error = str(exc)
             return None
@@ -965,6 +987,7 @@ class VoiceWindow(tk.Toplevel):
 
     def _publish_text(self, value: str) -> None:
         """显示最终识别结果；开关打开时同时键入外部焦点输入框。"""
+        value = normalize_asr_text(value)   # 兜底云端/剪贴板等所有来源
         if not value:
             return
         self._set_text(value)
