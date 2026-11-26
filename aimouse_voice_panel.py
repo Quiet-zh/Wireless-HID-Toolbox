@@ -897,6 +897,7 @@ class VoiceWindow(tk.Toplevel):
     def _on_rec_start(self) -> None:
         self._partial = ""
         self._asr_active = False
+        self._reset_stream_typing()
         # 记录剪贴板基线：官方驱动识别完成后会写入剪贴板
         self._clip_before = clipboard_sequence()
         streaming = bool(int(self.cfg.get("stream_asr", 1) or 0))
@@ -950,6 +951,8 @@ class VoiceWindow(tk.Toplevel):
             if partial and partial != self._partial:
                 self._partial = partial
                 self._set_text(partial)
+                # 「语音输入到焦点」开启时，边说边把稳定增量键入输入框
+                self._type_stream_partial(partial)
 
     def _on_key(self, arg: int) -> None:
         label = {0x33: "单击（回车/发送）", 0x37: "长按按下", 0x31: "长按按下",
@@ -968,6 +971,8 @@ class VoiceWindow(tk.Toplevel):
             final = self.asr.finish()
         self._asr_active = False
         self._stream_decoder = None        # 下一段录音重建，避免状态串段
+        if not final:
+            self._reset_stream_typing()    # 本段没有最终结果，清空流式键入状态
         self.meter.coords(self.meter_fill, 0, 0, 0, 16)
         if not frames:
             self.status.configure(text="没录到音频（%s）" % (reason or "无数据"),
@@ -1058,24 +1063,86 @@ class VoiceWindow(tk.Toplevel):
         self.text.delete("1.0", "end")
         self.text.insert("1.0", value)
 
+    def _reset_stream_typing(self) -> None:
+        """每段录音开始时清空流式键入状态。"""
+        self._typed_partial = ""     # 已经键入到输入框的、稳定的部分结果
+        self._stream_type_failed = False
+
+    def _type_stream_partial(self, partial: str) -> None:
+        """流式输入：只键入比上次稳定前缀多出来的部分。
+
+        Vosk 的 PartialResult 是**整句假设**，每次都从头返回；直接整段键入
+        会重复。策略：找到已键入前缀与当前 partial 的最长公共前缀，
+        只键入新增后缀；假设回退时不撤字（避免误删用户内容），
+        等最终结果到达时在 ``_publish_text`` 里用退格纠正。
+        """
+        if not partial:
+            return
+        if not int(self.cfg.get("voice_typing", 0) or 0):
+            return
+        if self._stream_type_failed or not vt.supported():
+            return
+        target = self._focus_target
+        if target is None:
+            return
+        typed = getattr(self, "_typed_partial", "")
+        # 只信任「已键入内容 + 新增后缀」这种前缀式增长
+        if not partial.startswith(typed):
+            return
+        delta = partial[len(typed):]
+        if not delta:
+            return
+        ok, _msg = vt.type_text(delta, target)
+        if ok:
+            self._typed_partial = partial
+        else:
+            self._stream_type_failed = True
+            self.asr_hint.configure(text="流式输入失败，本段停止自动键入")
+
     def _publish_text(self, value: str) -> None:
         """显示最终识别结果；开关打开时同时键入外部焦点输入框。"""
         value = normalize_asr_text(value)   # 兜底云端/剪贴板等所有来源
         if not value:
+            self._reset_stream_typing()
             return
-        self._set_text(value)
+        self._set_text(value)               # 界面始终显示完整最终结果
+
         if not int(self.cfg.get("voice_typing", 0) or 0):
+            self._reset_stream_typing()
             return
         if not vt.supported():
             self.asr_hint.configure(text="语音输入仅支持 Windows")
+            self._reset_stream_typing()
             return
         target = self._focus_target
         if target is None:
             self.asr_hint.configure(
                 text="语音输入：未检测到外部输入框，请说话前先点好目标输入框")
             self.status.configure(text="未检测到外部输入框", fg=themed(AMBER))
+            self._reset_stream_typing()
             return
-        ok, msg = vt.type_text(value, target)
+
+        # 流式已键入一部分：只纠正差异，不重复整段
+        typed = getattr(self, "_typed_partial", "")
+        to_type = value
+        if typed and not self._stream_type_failed:
+            common = 0
+            for a, b in zip(typed, value):
+                if a != b:
+                    break
+                common += 1
+            backspaces = len(typed) - common
+            if vt.send_inputs(vt.build_backspace_inputs(backspaces)):
+                to_type = value[common:]
+            else:
+                to_type = value          # 退格失败，退回整段键入
+
+        self._reset_stream_typing()
+        if not to_type:
+            self.asr_hint.configure(text="语音输入：已实时键入完成")
+            self.status.configure(text="已键入焦点输入框", fg=themed(GREEN))
+            return
+        ok, msg = vt.type_text(to_type, target)
         self.asr_hint.configure(text="语音输入：%s" % msg)
         self.status.configure(text=("已键入焦点输入框" if ok else "键入失败"),
                               fg=themed(GREEN if ok else AMBER))

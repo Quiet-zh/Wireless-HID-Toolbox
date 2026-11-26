@@ -27,6 +27,7 @@ from typing import Optional
 INPUT_KEYBOARD = 1
 KEYEVENTF_UNICODE = 0x0004
 KEYEVENTF_KEYUP = 0x0002
+VK_BACK = 0x08
 SW_RESTORE = 9
 MAX_CHARS = 2000          # 单次键入上限，避免长文本卡住输入队列
 
@@ -239,6 +240,24 @@ def build_unicode_inputs(text: str) -> list[INPUT]:
         for unit in _utf16_units(ch):
             out.append(_make_input(unit, False))
             out.append(_make_input(unit, True))
+    return out
+
+
+def build_backspace_inputs(count: int) -> list[INPUT]:
+    """构造 ``count`` 次退格（流式输入纠正假设时用）。"""
+    out: list[INPUT] = []
+    for _ in range(max(0, min(int(count), MAX_CHARS))):
+        down = INPUT()
+        down.type = INPUT_KEYBOARD
+        down.u.ki.wVk = VK_BACK
+        down.u.ki.wScan = 0
+        down.u.ki.dwFlags = 0
+        up = INPUT()
+        up.type = INPUT_KEYBOARD
+        up.u.ki.wVk = VK_BACK
+        up.u.ki.wScan = 0
+        up.u.ki.dwFlags = KEYEVENTF_KEYUP
+        out.extend((down, up))
     return out
 
 

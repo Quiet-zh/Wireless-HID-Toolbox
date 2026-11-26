@@ -100,6 +100,11 @@ class TestAudioFeedGating(unittest.TestCase):
         win.asr = mock.Mock()
         win.asr.partial.return_value = "测试"
         win._set_text = mock.Mock()
+        win.cfg = {"voice_typing": 0}      # 流式输入默认关，避免触发键入
+        win._focus_target = None
+        win._typed_partial = ""
+        win._stream_type_failed = False
+        win.asr_hint = mock.Mock()
         return win
 
     def test_segment_mode_does_not_feed(self):

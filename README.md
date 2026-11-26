@@ -1,6 +1,6 @@
 # Wireless HID Toolbox（2.4G 外设工具箱）
 
-当前版本：**v1.19.0**（更新记录见 [CHANGELOG.md](CHANGELOG.md)）
+当前版本：**v1.20.0**（更新记录见 [CHANGELOG.md](CHANGELOG.md)）
 
 Windows 10/11 的 2.4G 无线外设电量与 HID 调试工具箱。纯 Python 标准库 +
 `ctypes` + `tkinter`，运行时不依赖任何第三方库。
@@ -357,6 +357,9 @@ av.save_wav("voice.wav", av.normalize(samples))
 - 中文通过 `SendInput` 的 `KEYEVENTF_UNICODE` 逐字符发送，
   非 BMP 字符（emoji）自动拆成 UTF-16 surrogate 对
 - 若目标窗口已不在前台，先尝试 `SetForegroundWindow` 恢复，失败则跳过并提示
+- **流式输入**：`voice_typing=1` 且流式转写时，边说边把**稳定增量**键入输入框
+  （Vosk partial 是整句假设，只键入新增部分，不重复）；假设改写时不撤字，
+  最终结果到达后用退格纠正差异，界面始终显示完整结果
 - 开关默认 **0（关闭）**；未检测到外部输入框时只显示、不键入；
   实时中间结果只显示，只有最终识别结果才会键入
 - 开启后顶部徽标会追加 `· ⌨语音输入`
@@ -497,7 +500,7 @@ python tray_app.py --quit
 python -m unittest discover -s tests -v
 ```
 
-共 **248** 个用例：
+共 **263** 个用例：
 
 - 8 个鼠标协议/电压曲线
 - 5 个 Raw Input 事件解析
@@ -526,6 +529,7 @@ python -m unittest discover -s tests -v
 - 6 个未连接设备默认隐藏（面板/托盘/启动占位/设置开关）
 - 5 个 Ctrl+C 中断不刷 traceback（vosk 导入锁 / 入口）
 - 10 个保存语音开关（默认开、关闭不写 WAV、内存识别兜底）
+- 15 个流式输入增量键入（只键稳定增量、最终结果退格纠正）
 - 8 个设备目录/类型/删除恢复
 - 3 个 104 键布局数据
 - 4 个配置默认值/合并/主题回退
