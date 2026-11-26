@@ -108,6 +108,53 @@ def decode_frames(frames: Iterable[bytes]) -> list[int]:
     return samples
 
 
+class LocalStreamDecoder:
+    """逐帧增量解码：XOR 解扰 + 跨帧连续 IMA。
+
+    与 :func:`decode_frames_local` **字节级一致**，但 predictor / step_index
+    在实例里跨帧保留，适合一边收 HID 帧一边喂给流式 ASR。
+    每帧 ``feed()`` 返回 56 个 16bit 样本；非法帧返回空列表。
+    """
+
+    def __init__(self, pred0: int = 0, index0: int = 0):
+        self.reset(pred0, index0)
+
+    def reset(self, pred0: int = 0, index0: int = 0) -> None:
+        self.pred = pred0
+        self.index = max(0, min(88, index0))
+
+    def feed(self, frame: bytes) -> list[int]:
+        if not is_audio_frame(frame):
+            return []
+        out: list[int] = []
+        for pos, raw in enumerate(frame[AUDIO_OFFSET:FRAME_SIZE]):
+            byte = raw ^ ADPCM_XOR_MASK[pos]
+            for nib in (byte & 0x0F, (byte >> 4) & 0x0F):
+                step = STEP_TABLE[self.index]
+                diff = step >> 3
+                if nib & 4:
+                    diff += step
+                if nib & 2:
+                    diff += step >> 1
+                if nib & 1:
+                    diff += step >> 2
+                self.pred = (self.pred - diff if nib & 8
+                             else self.pred + diff)
+                if self.pred > 32767:
+                    self.pred = 32767
+                elif self.pred < -32768:
+                    self.pred = -32768
+                self.index = max(0, min(88, self.index + INDEX_TABLE[nib]))
+                out.append(self.pred)
+        return out
+
+    def feed_all(self, frames: Iterable[bytes]) -> list[int]:
+        out: list[int] = []
+        for frame in frames:
+            out.extend(self.feed(frame))
+        return out
+
+
 def decode_frames_local(frames: Iterable[bytes],
                         pred0: int = 0, index0: int = 0) -> list[int]:
     """**纯本地**还原设备语音（不需要云端、官方驱动或剪贴板）。
@@ -120,32 +167,9 @@ def decode_frames_local(frames: Iterable[bytes],
     * 帧头 ``[1:4]`` 是设备侧状态，**不参与**解码。
 
     返回 16bit 样本列表，每帧 56 个。非法帧跳过。
+    流式识别请用等价的增量类 :class:`LocalStreamDecoder`。
     """
-    pred = pred0
-    index = max(0, min(88, index0))
-    out: list[int] = []
-    for frame in frames:
-        if not is_audio_frame(frame):
-            continue
-        for pos, raw in enumerate(frame[AUDIO_OFFSET:FRAME_SIZE]):
-            byte = raw ^ ADPCM_XOR_MASK[pos]
-            for nib in (byte & 0x0F, (byte >> 4) & 0x0F):
-                step = STEP_TABLE[index]
-                diff = step >> 3
-                if nib & 4:
-                    diff += step
-                if nib & 2:
-                    diff += step >> 1
-                if nib & 1:
-                    diff += step >> 2
-                pred = pred - diff if nib & 8 else pred + diff
-                if pred > 32767:
-                    pred = 32767
-                elif pred < -32768:
-                    pred = -32768
-                index = max(0, min(88, index + INDEX_TABLE[nib]))
-                out.append(pred)
-    return out
+    return LocalStreamDecoder(pred0, index0).feed_all(frames)
 
 
 def split_segments(frames: list[bytes], gap_frames: int = 12) -> list[list[bytes]]:

@@ -1,6 +1,6 @@
 # Wireless HID Toolbox（2.4G 外设工具箱）
 
-当前版本：**v1.14.3**（更新记录见 [CHANGELOG.md](CHANGELOG.md)）
+当前版本：**v1.14.4**（更新记录见 [CHANGELOG.md](CHANGELOG.md)）
 
 Windows 10/11 的 2.4G 无线外设电量与 HID 调试工具箱。纯 Python 标准库 +
 `ctypes` + `tkinter`，运行时不依赖任何第三方库。
@@ -307,6 +307,10 @@ av.save_wav("voice.wav", av.normalize(samples))
 | **1（默认）** | **边说边转**：录音期间实时显示部分识别结果，松开按键得到最终结果 |
 | 0 | **整段识别**：录音期间完全不加载识别器，松开按键、保存 WAV 后对整段音频识别一次 |
 
+**流式与整段共用同一套解码**：`LocalStreamDecoder`（XOR 解扰 + 跨帧连续 IMA），
+保证流式喂给 Vosk 的不是未解扰噪声；若流式仍没出文字且自动转文字开着，
+会自动回退整段识别一次。
+
 整段模式受 `auto_transcribe` 控制（默认开）。两种模式的结果都显示在
 「识别文字」区，并在 `voice_typing=1` 时键入焦点输入框；
 顶部徽标会显示 `实时转写` 或 `整段转写`。
@@ -466,7 +470,7 @@ python tray_app.py --quit
 python -m unittest discover -s tests -v
 ```
 
-共 **182** 个用例：
+共 **193** 个用例：
 
 - 8 个鼠标协议/电压曲线
 - 5 个 Raw Input 事件解析
@@ -487,6 +491,7 @@ python -m unittest discover -s tests -v
 - 3 个 Vosk 日志静音（只设一次、缺失 API 容错、available 触发）
 - 9 个事件轮询健壮性与音频帧自动开录（异常隔离、重调度、冷却期）
 - 4 个设置对话框滚轮绑定（无全局绑定、销毁后无异常、重复开关）
+- 11 个增量解码器与流式 PCM 正确性（字节级一致、不再喂未解扰噪声）
 - 8 个设备目录/类型/删除恢复
 - 3 个 104 键布局数据
 - 4 个配置默认值/合并/主题回退

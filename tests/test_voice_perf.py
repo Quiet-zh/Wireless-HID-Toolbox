@@ -173,12 +173,13 @@ class TestNoDoubleTranscribe(unittest.TestCase):
         win._transcribe = mock.Mock()
         return win
 
-    def test_stream_ran_no_second_pass(self):
+    def test_stream_empty_falls_back_to_file(self):
+        """流式没出文字时回退整段识别一次，保证用户能拿到结果。"""
         win = self._window(asr_active=True, final="")
         frame = b"\x1b" + bytes(32)
         win._on_segment([frame], 1.0, "按键抬起")
-        win._transcribe.assert_not_called()
         win.asr.finish.assert_called_once()
+        win._transcribe.assert_called_once()
 
     def test_stream_never_started_falls_back(self):
         win = self._window(asr_active=False)

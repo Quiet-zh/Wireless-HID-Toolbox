@@ -613,6 +613,7 @@ class VoiceWindow(tk.Toplevel):
         self._focus_target = None       # 最近一次的非本进程前台窗口
         self._focus_poll_at = 0.0
         self._ui_tick = 0.0             # 音量条/部分结果节流时间戳
+        self._stream_decoder = None      # 流式模式用的跨帧连续解码器
         self.selected: Optional[str] = None
         self._build()
         self._refresh_mode()
@@ -834,7 +835,11 @@ class VoiceWindow(tk.Toplevel):
         self._set_text("")
         if not streaming:
             # 整段模式：录音期间完全不加载识别器，松开后对 WAV 识别一次
+            self._stream_decoder = None
             return
+        # 流式模式：用与 decode_frames_local 完全一致的增量解码器，
+        # 否则喂给 Vosk 的是未解扰的 ADPCM 噪声（旧版 decode_frame 的坑）
+        self._stream_decoder = av.LocalStreamDecoder()
 
         def init_asr():
             if self.asr.begin():
@@ -846,7 +851,11 @@ class VoiceWindow(tk.Toplevel):
         threading.Thread(target=init_asr, daemon=True).start()
 
     def _on_audio(self, frame: bytes) -> None:
-        samples = av.decode_frame(frame)
+        decoder = getattr(self, "_stream_decoder", None)
+        # 流式模式用 XOR 解扰 + 跨帧连续 IMA 的正确 PCM；
+        # 整段模式不喂 ASR，用轻量单帧解码仅显示音量条
+        samples = (decoder.feed(frame) if decoder is not None
+                   else av.decode_frame(frame))
         if not samples:
             return
         if self._asr_active:
@@ -886,6 +895,7 @@ class VoiceWindow(tk.Toplevel):
         if had_stream:
             final = self.asr.finish()
         self._asr_active = False
+        self._stream_decoder = None        # 下一段录音重建，避免状态串段
         self.meter.coords(self.meter_fill, 0, 0, 0, 16)
         if not frames:
             self.status.configure(text="没录到音频（%s）" % (reason or "无数据"),
@@ -918,13 +928,18 @@ class VoiceWindow(tk.Toplevel):
             self._publish_text(final)
         elif self._partial:
             self._set_text(self._partial)
-        # 只有流式识别从未启动时才补一次文件识别；
-        # 已经跑过一遍就不再重复（Vosk 每 5 秒音频约需 1.8 秒）
-        if int(self.cfg.get("auto_transcribe", 1) or 0) and not had_stream:
-            self._transcribe(allow_clipboard=True)
-        elif had_stream and not final:
+        # 有最终结果就绝不重复识别；没结果且自动转文字开着才回退整段识别
+        auto = int(self.cfg.get("auto_transcribe", 1) or 0)
+        if final:
+            return
+        if auto:
             self.asr_hint.configure(
-                text="本段已完成识别但未得到文字（已跳过重复识别以免拖慢）")
+                text=("流式未得到文字，已回退整段识别" if had_stream
+                      else "松开后整段识别中…"))
+            self._transcribe(allow_clipboard=True)
+        else:
+            self.asr_hint.configure(
+                text="本段未识别到文字（自动转文字已关闭）")
 
     def _denoise(self, samples: list[int], strength: int) -> list[int]:
         try:

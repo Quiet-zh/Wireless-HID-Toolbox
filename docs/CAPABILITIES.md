@@ -99,7 +99,7 @@
 
 | 文件 | 职责 |
 | --- | --- |
-| `aimouse_voice.py` | 帧解析、`ADPCM_XOR_MASK`、`decode_frames_local()`、WAV/滤波 |
+| `aimouse_voice.py` | 帧解析、`ADPCM_XOR_MASK`、`decode_frames_local()`、`LocalStreamDecoder`（增量流式解码）、WAV/滤波 |
 | `aimouse_voice_capture.py` | 命令行 HID 采集（`--list` / `--seconds`） |
 | `aimouse_voice_panel.py` | 语音窗口、录制线程、Vosk 封装、剪贴板桥接、设置 UI |
 | `aimouse_cloud_asr.py` | 官方云端 ASR 协议（可选，`websockets`） |
@@ -108,7 +108,7 @@
 | `voice_typing.py` | 焦点捕获 + `SendInput` Unicode 键入（语音输入到任意输入框） |
 | `tools/verify_local_decode.py` | 独立验证纯本地解码链路（零依赖） |
 | `docs/AiMouse-RE-Notes.md` | 完整逆向过程、反汇编证据、协议细节 |
-| `tests/` | 182 个自动化用例 |
+| `tests/` | 193 个自动化用例 |
 
 ## 6. 验证与自检
 
@@ -144,3 +144,4 @@ python main.py --version
 | 1.14.1 | 静音 Vosk/Kaldi 模型加载日志 |
 | 1.14.2 | 修复事件轮询异常导致语音功能整体失效；协议兜底与抓帧诊断工具 |
 | 1.14.3 | 修复设置对话框 `bind_all` 滚轮绑定泄漏导致的 TclError 刷屏 |
+| **1.14.4** | **修复流式转文字喂未解扰噪声、识别不出文字** |
