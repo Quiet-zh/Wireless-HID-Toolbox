@@ -6,9 +6,13 @@
 | 脚本 | 用途 | 依赖 |
 | --- | --- | --- |
 | `verify_local_decode.py` | 用 4 条真实 HID 帧验证 XOR 密钥 + 跨帧连续 IMA 解码，打印波形统计 | **零第三方依赖** |
+| `diagnose_voice.py` | 监听 0xFF91 打印设备帧序列，确认开始/结束/抬起帧 | 需接上接收器 |
 
 ```bat
 python tools\verify_local_decode.py
+
+:: 排障：先关掉语音窗口的「开始监测」，再抓 10 秒帧
+python tools\diagnose_voice.py 10
 ```
 
 输出应包含 `✅ 纯本地解码链路验证通过`，

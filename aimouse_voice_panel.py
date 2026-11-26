@@ -17,6 +17,7 @@ import json
 import os
 import queue
 import re
+import sys
 import threading
 import time
 import tkinter as tk
@@ -331,17 +332,20 @@ class Recorder(threading.Thread):
         self._start_ts = 0.0
         self._last_ts = 0.0
         self._finish_at = 0.0      # 按键抬起后的延迟收尾时间戳
+        self._cooldown_until = 0.0  # 收尾后的静默期，忽略尾部音频帧
 
     def stop(self) -> None:
         self._stop.set()
 
-    def _finish(self, reason: str = "") -> None:
+    def _finish(self, reason: str = "", now: float | None = None) -> None:
         if not self._recording:
             return
+        when = time.monotonic() if now is None else now
         self._recording = False
         frames = self._frames
         self._frames = []
-        dur = time.monotonic() - self._start_ts
+        self._cooldown_until = when + 0.5
+        dur = when - self._start_ts
         self.events.put(("segment", frames, dur, reason))
 
     def note_key(self, arg: int, now: float) -> None:
@@ -352,13 +356,29 @@ class Recorder(threading.Thread):
     def _check_finish(self, now: float) -> None:
         """收尾判定，必须在每轮循环开头调用（音频帧分支会 continue）。"""
         if self._finish_at and now >= self._finish_at:
-            self._finish("按键抬起")
+            self._finish("按键抬起", now)
             self._finish_at = 0.0
         elif self._recording:
             if now - self._last_ts > 0.6:
-                self._finish("音频中断")
+                self._finish("音频中断", now)
             elif now - self._start_ts > self.max_seconds:
-                self._finish("达到时长上限")
+                self._finish("达到时长上限", now)
+
+    def _on_audio_frame(self, data: bytes, now: float) -> None:
+        """处理一条 0x1B 音频帧；必要时自动进入录制。"""
+        if not self._recording:
+            # 兜底：部分模式设备直接推音频帧、不补 0x05/0x62 开始帧；
+            # 收尾后 0.5s 内的尾部帧忽略，避免反复开录
+            if now < self._cooldown_until:
+                return
+            self._recording = True
+            self._frames = []
+            self._start_ts = now
+            self._finish_at = 0.0
+            self.events.put(("start", None))
+        self._frames.append(data)
+        self._last_ts = now
+        self.events.put(("audio", data))
 
     def run(self) -> None:
         iface = avc.find_interface()
@@ -376,10 +396,7 @@ class Recorder(threading.Thread):
                     if report:
                         data = bytes(report)
                         if data[:1] == b"\x1b":
-                            if self._recording:
-                                self._frames.append(data)
-                                self._last_ts = now
-                                self.events.put(("audio", data))
+                            self._on_audio_frame(data, now)
                             continue
                         if len(data) >= 4 and data[:2] == b"\x0c\x4d":
                             cmd, arg = data[2], data[3]
@@ -392,7 +409,7 @@ class Recorder(threading.Thread):
                                     self._finish_at = 0.0
                                     self.events.put(("start", None))
                             elif cmd == 0x05 and arg == 0x63:
-                                self._finish()
+                                self._finish(now=now)
                                 self._finish_at = 0.0
                             elif cmd == 0x04:
                                 self.events.put(("key", arg))
@@ -737,50 +754,65 @@ class VoiceWindow(tk.Toplevel):
         self.status.configure(text="已结束监测", fg=themed(FAINT))
 
     # -- 事件轮询 ---------------------------------------------------------
+    def _dispatch(self, item) -> None:
+        """分发单个队列事件；异常由 _poll 隔离，不能拖垮轮询链。"""
+        kind = item[0]
+        if kind == "start":
+            self._on_rec_start()
+        elif kind == "audio":
+            self._on_audio(item[1])
+        elif kind == "segment":
+            self._on_segment(item[1], item[2], item[3])
+        elif kind == "key":
+            self._on_key(item[1])
+        elif kind == "error":
+            self.status.configure(text=item[1], fg=themed(RED))
+        elif kind == "asr_ready":
+            self._asr_active = True
+        elif kind == "asr_text":
+            self._publish_text(item[1])
+        elif kind == "asr_backend":
+            self.asr_hint.configure(text="识别来源：%s" % item[1])
+            self.status.configure(text="识别完成 · %s" % item[1],
+                                  fg=themed(GREEN))
+        elif kind == "asr_unavailable":
+            self.asr_hint.configure(text=item[1])
+
     def _poll(self) -> None:
-        # 持续记录用户最近停留的「外部」输入框（每 0.4 秒一次）
-        now = time.monotonic()
-        if now - self._focus_poll_at >= 0.4:
-            self._focus_poll_at = now
-            try:
-                target = vt.track_focus(exclude_pid=os.getpid())
-                if target is not None:
-                    self._focus_target = target
-            except Exception:
-                pass
-        budget = 120          # 单轮上限，避免音频帧洪泛饿死 segment/其它事件
         try:
+            # 持续记录用户最近停留的「外部」输入框（每 0.4 秒一次）
+            now = time.monotonic()
+            if now - self._focus_poll_at >= 0.4:
+                self._focus_poll_at = now
+                try:
+                    target = vt.track_focus(exclude_pid=os.getpid())
+                    if target is not None:
+                        self._focus_target = target
+                except Exception:
+                    pass
+            budget = 120      # 单轮上限，避免音频帧洪泛饿死 segment/其它事件
             while budget > 0:
-                item = self.events.get_nowait()
+                try:
+                    item = self.events.get_nowait()
+                except queue.Empty:
+                    break
                 budget -= 1
-                kind = item[0]
-                if kind == "start":
-                    self._on_rec_start()
-                elif kind == "audio":
-                    self._on_audio(item[1])
-                elif kind == "segment":
-                    self._on_segment(item[1], item[2], item[3])
-                elif kind == "key":
-                    self._on_key(item[1])
-                elif kind == "error":
-                    self.status.configure(text=item[1], fg=themed(RED))
-                elif kind == "asr_ready":
-                    self._asr_active = True
-                elif kind == "asr_text":
-                    self._publish_text(item[1])
-                elif kind == "asr_backend":
-                    self.asr_hint.configure(text="识别来源：%s" % item[1])
-                    self.status.configure(text="识别完成 · %s" % item[1],
-                                          fg=themed(GREEN))
-                elif kind == "asr_unavailable":
-                    self.asr_hint.configure(text=item[1])
-        except queue.Empty:
-            pass
-        try:
-            # 还有积压就尽快续处理，否则回到常规 40ms 节奏
-            self.after(0 if not self.events.empty() else 40, self._poll)
-        except tk.TclError:
-            pass
+                try:
+                    self._dispatch(item)
+                except Exception as exc:
+                    # 单个事件失败只记录，绝不能让 after() 调度丢失
+                    msg = "[voice] 事件 %s 处理失败: %r" % (item[0], exc)
+                    print(msg, file=sys.stderr, flush=True)
+                    try:
+                        self.status.configure(text=msg[:60], fg=themed(RED))
+                    except Exception:
+                        pass
+        finally:
+            # 无论上面发生什么，都必须重新调度，否则整个语音功能静默失效
+            try:
+                self.after(0 if not self.events.empty() else 40, self._poll)
+            except tk.TclError:
+                pass
 
     def _on_rec_start(self) -> None:
         self._partial = ""
