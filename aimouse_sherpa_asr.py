@@ -126,6 +126,8 @@ class SherpaAsrEngine:
         self._pcm = bytearray()      # 本次会话累积的 PCM（整段精修用）
         self._lock = threading.Lock()
         self.error = ""
+        # 前导静音门控参数：面板按设置写入；None 表示不启用（feed 不做任何裁剪）
+        self.onset_kwargs: Optional[dict] = {}
 
     # -- 可用性 --------------------------------------------------------
     def stream_ready(self) -> bool:
@@ -273,7 +275,9 @@ class SherpaAsrEngine:
             return False
         with self._lock:
             self._stream = stream
-            self._gate = av.OnsetGate()
+            # onset_kwargs 为 None 表示用户关掉了前导静音门控
+            self._gate = (av.OnsetGate(**self.onset_kwargs)
+                          if self.onset_kwargs is not None else None)
             self._pcm = bytearray()
             self.error = ""
         return True

@@ -242,10 +242,14 @@ def pcm16_to_samples(pcm: bytes) -> list[int]:
 # 起点前面再回退 120ms，避免削掉「测」这类弱起爆破音。
 # ---------------------------------------------------------------------------
 ONSET_HOP = 320             # 判定窗口 320 样本 = 20ms @16kHz
-ONSET_RMS_THRESHOLD = 3000  # 语音起点能量阈值（底噪的 4~6 倍）
+ONSET_RMS_THRESHOLD = 0     # 0 = 自适应（按底噪倍数）；>0 = 固定阈值
+ONSET_FLOOR_FACTOR = 3.5    # 自适应阈值 = 底噪 × 该倍数（35 条录音 + 长静音样本实测折中）
+ONSET_MIN_THRESHOLD = 400   # 绝对下限，防止底噪极低时门控形同虚设
+ONSET_FLOOR_WINDOWS = 75    # 底噪估计窗口数（75×20ms = 1.5s 滑动）
 ONSET_NEED = 2              # 连续多少个窗口超标才认定起点
 ONSET_BACK_SEC = 0.12       # 起点前额外保留的时长
-ONSET_MAX_WAIT_SEC = 2.5    # 等这么久仍无起点就直接放行（避免吞掉整段）
+ONSET_MAX_WAIT_SEC = 2.5    # 等这么久仍无起点就降阈值再找（再找不到才全放行）
+ONSET_FALLBACK_RATIO = 0.4  # 降阈值时的倍率（说得很轻 / 停顿很久时用）
 
 
 def pcm_rms(pcm: bytes) -> float:
@@ -260,23 +264,48 @@ def samples_rms(samples) -> float:
     return (sum(v * v for v in samples) / len(samples)) ** 0.5
 
 
+def auto_threshold(window_rms, factor: float = ONSET_FLOOR_FACTOR,
+                   min_threshold: float = ONSET_MIN_THRESHOLD) -> float:
+    """按底噪自适应算阈值：底噪取已见窗口的**最小能量**，乘倍数。
+
+    实测同一台设备不同录音的底噪能差 160 倍（7 ~ 1152），固定阈值
+    要么裁不掉、要么把整句语音当噪声裁掉，所以默认走自适应。
+
+    用最小值而不是分位数：分位数在「整段都是语音、没有静音」时会
+    取到语音自己的能量，算出的阈值高于语音，门控永远打不开。最小值
+    取到的是真正的谷底，真实语音的音节起伏足够越过它的数倍。
+    """
+    if not window_rms:
+        return min_threshold
+    return max(min(window_rms) * factor, min_threshold)
+
+
 def find_onset(samples, threshold: float = ONSET_RMS_THRESHOLD,
                hop: int = ONSET_HOP, need: int = ONSET_NEED,
                back_sec: float = ONSET_BACK_SEC,
+               floor_factor: float = ONSET_FLOOR_FACTOR,
+               min_threshold: float = ONSET_MIN_THRESHOLD,
                rate: int = SAMPLE_RATE) -> int:
     """返回语音起点样本下标；找不到返回 0。
 
-    连续 ``need`` 个窗口超过 ``threshold`` 才算起点。认定后回退
-    ``need-1`` 个窗口 + ``back_sec``，确保判定期本身和弱起辅音都不被削掉。
+    ``threshold=0``（默认）按底噪自适应，>0 时用该固定阈值。
+    连续 ``need`` 个窗口超过阈值才算起点，认定后回退 ``need-1`` 个窗口
+    加 ``back_sec``，确保判定期本身和弱起辅音都不被削掉。
     """
     if not samples:
         return 0
-    hits = 0
+    wins = []
     for i in range(0, len(samples) - hop + 1, hop):
-        if samples_rms(samples[i:i + hop]) > threshold:
+        wins.append(samples_rms(samples[i:i + hop]))
+    th = (threshold if threshold > 0
+          else auto_threshold(wins, floor_factor, min_threshold))
+
+    hits = 0
+    for idx, rms in enumerate(wins):
+        if rms > th:
             hits += 1
             if hits >= need:
-                # i 是当前窗口起点；回退前面已判定通过的窗口 + back_sec
+                i = idx * hop
                 start = i - (hits - 1) * hop - int(rate * back_sec)
                 return max(0, start)
         else:
@@ -301,27 +330,37 @@ def trim_pcm(pcm: bytes, **kw) -> bytes:
 class OnsetGate:
     """流式喂数据时的语音起点门控：起点之前的静音不交给识别引擎。
 
-    实时性开销只有 ``ONSET_NEED × 20ms``，且起点会回退 ``back_sec``，
-    所以不会丢掉第一个字。等满 ``max_wait_sec`` 还没检测到起点时
-    直接放行全部缓冲，避免小声说话 / 环境噪声偏低时整段被吞。
+    默认按**底噪自适应**算阈值（`threshold=0`），因为同一设备不同录音的
+    底噪实测能差 160 倍，固定阈值不是裁不掉就是把整句当噪声。
+    实时性开销只有 ``need × 20ms``，且起点会回退 ``back_sec``，
+    所以不会丢掉第一个字。
     """
 
     def __init__(self, threshold: float = ONSET_RMS_THRESHOLD,
                  hop: int = ONSET_HOP, need: int = ONSET_NEED,
                  back_sec: float = ONSET_BACK_SEC,
                  max_wait_sec: float = ONSET_MAX_WAIT_SEC,
+                 fallback_ratio: float = ONSET_FALLBACK_RATIO,
+                 floor_factor: float = ONSET_FLOOR_FACTOR,
+                 min_threshold: float = ONSET_MIN_THRESHOLD,
+                 floor_windows: int = ONSET_FLOOR_WINDOWS,
                  rate: int = SAMPLE_RATE):
         self.threshold = threshold
         self.hop = max(hop, 2)
         self.need = max(need, 1)
         self.back_sec = back_sec
         self.max_wait_sec = max_wait_sec
+        self.fallback_ratio = fallback_ratio
+        self.floor_factor = floor_factor
+        self.min_threshold = min_threshold
+        self.floor_windows = max(floor_windows, 5)
         self.rate = rate
         self._buf = bytearray()
         self._scan = 0
         self._hits = 0
         self._wait = 0.0
         self._dropped = 0
+        self._recent: list[float] = []   # 最近若干窗口的 RMS，用于估底噪
         self.opened = False
 
     def reset(self) -> None:
@@ -330,7 +369,15 @@ class OnsetGate:
         self._hits = 0
         self._wait = 0.0
         self._dropped = 0
+        self._recent = []
         self.opened = False
+
+    def current_threshold(self) -> float:
+        """当前生效的阈值：固定值，或按已见窗口底噪自适应。"""
+        if self.threshold > 0:
+            return self.threshold
+        return auto_threshold(self._recent, self.floor_factor,
+                              self.min_threshold)
 
     @property
     def dropped_sec(self) -> float:
@@ -361,7 +408,11 @@ class OnsetGate:
         hop_bytes = self.hop * 2
         while self._scan + hop_bytes <= len(self._buf):
             seg = bytes(self._buf[self._scan:self._scan + hop_bytes])
-            if pcm_rms(seg) > self.threshold:
+            rms = pcm_rms(seg)
+            self._recent.append(rms)
+            if len(self._recent) > self.floor_windows:
+                del self._recent[:len(self._recent) - self.floor_windows]
+            if rms > self.current_threshold():
                 self._hits += 1
             else:
                 self._hits = 0
@@ -381,9 +432,18 @@ class OnsetGate:
             self._buf = bytearray()
             return out
         if self._wait >= self.max_wait_sec:
+            # 等太久了：先降阈值在缓冲里再找一次起点（说话轻 / 前面停顿很长
+            # 时常见），确实找不到才从头全放行——比直接全放行少喂一大段静音
             self.opened = True
-            self._dropped = 0
-            out = bytes(self._buf)
+            samples = pcm16_to_samples(bytes(self._buf))
+            base = self.current_threshold()
+            start = find_onset(samples,
+                               threshold=base * self.fallback_ratio,
+                               hop=self.hop, need=self.need,
+                               back_sec=self.back_sec, rate=self.rate)
+            start = max(0, start)
+            self._dropped = start * 2
+            out = bytes(self._buf[start * 2:])
             self._buf = bytearray()
             return out
         return b""

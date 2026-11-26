@@ -95,6 +95,12 @@ PARAM_DEFS = [
     ("asr_refine", "收尾高精度校正",
      "1=松手后用 SenseVoice 再识别一次定稿（约 0.2 秒，更准、带标点）；0=只用流式结果",
      1, 0, 1, 1, "bool"),
+    ("onset_gate", "前导静音门控",
+     "1=按能量裁掉开头底噪再识别（句首不再「听出」假字）；0=原样送引擎",
+     1, 0, 1, 1, "bool"),
+    ("onset_factor", "门控灵敏度",
+     "底噪的多少倍算开始说话（单位 0.1 倍：35=3.5 倍）；越大裁得越多，太大可能削掉轻声",
+     35, 10, 100, 5, "int"),
     ("max_seconds", "单次最长录制", "超过该秒数自动结束并保存",
      30, 5, 120, 5, "int"),
     ("save_audio", "保存语音文件", "1=录音保存为 WAV；0=只转文字不保存",
@@ -225,6 +231,8 @@ class AsrEngine:
         self._gate = None            # 前导静音门控（begin 时创建）
         self._lock = threading.Lock()
         self.error = ""
+        # 前导静音门控参数：面板按设置写入；None 表示不启用
+        self.onset_kwargs: Optional[dict] = {}
 
     def available(self) -> bool:
         try:
@@ -305,7 +313,8 @@ class AsrEngine:
         try:
             from vosk import KaldiRecognizer
             self._rec = self._make_rec(KaldiRecognizer)
-            self._gate = av.OnsetGate()
+            self._gate = (av.OnsetGate(**self.onset_kwargs)
+                          if self.onset_kwargs is not None else None)
             return True
         except Exception as exc:
             self.error = str(exc)
@@ -437,6 +446,22 @@ def asr_engine_key(cfg: dict) -> tuple:
             cfg.get("model_dir", DEFAULT_MODEL),
             cfg.get("sherpa_model_dir") or DEFAULT_SHERPA_ROOT,
             cfg.get("asr_grammar", ""))
+
+
+def onset_kwargs(cfg: dict):
+    """把设置里的门控参数翻译成 :class:`aimouse_voice.OnsetGate` 的入参。
+
+    ``onset_gate=0`` 返回 None，引擎据此完全不裁剪。
+    ``onset_factor`` 用整数存 0.1 倍（25 表示底噪的 2.5 倍），
+    方便复用现有「输入框 + 加减按钮」的参数行。
+    """
+    if not int(cfg.get("onset_gate", 1) or 0):
+        return None
+    try:
+        factor = int(cfg.get("onset_factor", 35) or 35) / 10.0
+    except (TypeError, ValueError):
+        factor = av.ONSET_FLOOR_FACTOR
+    return {"floor_factor": max(1.0, min(factor, 10.0))}
 
 
 # ---------------------------------------------------------------------------
@@ -754,6 +779,7 @@ class VoiceWindow(tk.Toplevel):
         self.events: queue.Queue = queue.Queue()
         self.recorder: Optional[Recorder] = None
         self.asr = make_asr_engine(self.cfg)
+        self.asr.onset_kwargs = onset_kwargs(self.cfg)
         self._asr_key = asr_engine_key(self.cfg)
         self._asr_active = False
         self._partial = ""
@@ -885,6 +911,8 @@ class VoiceWindow(tk.Toplevel):
         else:
             # 仅词表变化不需要重建引擎（sherpa 忽略词表，Vosk 下次 begin 生效）
             self.asr.grammar = self.cfg.get("asr_grammar", "")
+        # 门控参数每次都同步（改灵敏度不用重建引擎，下次 begin 生效）
+        self.asr.onset_kwargs = onset_kwargs(self.cfg)
         if warm:
             # 决定预加载哪些模型：
             #   流式 + 精修  → 两个都加载（收尾要用 SenseVoice 定稿）

@@ -226,7 +226,7 @@ class TestFinishFlushesGate(_TmpModels):
         rec.is_ready.return_value = False
         eng._stream = stream
         eng._online = rec
-        eng._gate = av.OnsetGate()
+        eng._gate = av.OnsetGate(threshold=3000)
         return eng, stream, rec
 
     def test_flushes_when_gate_closed(self):
