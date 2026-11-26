@@ -64,6 +64,8 @@ PARAM_DEFS = [
      0, 0, 100, 5, "int"),
     ("auto_transcribe", "自动转文字", "录制结束后自动识别（1 开 / 0 关）",
      1, 0, 1, 1, "bool"),
+    ("stream_asr", "流式转文字", "1=边说边转（实时显示）；0=松开语音键后整段识别一次",
+     1, 0, 1, 1, "bool"),
     ("max_seconds", "单次最长录制", "超过该秒数自动结束并保存",
      30, 5, 120, 5, "int"),
     ("save_dir", "音频保存目录", "录制文件存放位置",
@@ -769,8 +771,15 @@ class VoiceWindow(tk.Toplevel):
         self._asr_active = False
         # 记录剪贴板基线：官方驱动识别完成后会写入剪贴板
         self._clip_before = clipboard_sequence()
-        self.status.configure(text="● 录音中…", fg=themed(RED))
+        streaming = bool(int(self.cfg.get("stream_asr", 1) or 0))
+        self.status.configure(
+            text=("● 录音中…（实时转写）" if streaming
+                  else "● 录音中…（松开后转写）"),
+            fg=themed(RED))
         self._set_text("")
+        if not streaming:
+            # 整段模式：录音期间完全不加载识别器，松开后对 WAV 识别一次
+            return
 
         def init_asr():
             if self.asr.begin():
@@ -1028,12 +1037,16 @@ class VoiceWindow(tk.Toplevel):
             self.cfg.get("model_dir", DEFAULT_MODEL)) == os.path.normpath(
                 BIG_MODEL_DIR)
         typing_on = bool(int(self.cfg.get("voice_typing", 0) or 0))
-        self.mode_label.configure(
-            text="🟢 纯本地解码 · %s · %s%s%s" %
-                 (backend, gram, " · 大模型" if using_big else "",
-                  " · ⌨语音输入" if typing_on else ""))
-        hint = "解码：纯本地（XOR+连续 IMA）｜识别：%s｜模型：%s" % (
-            backend, model)
+        streaming = bool(int(self.cfg.get("stream_asr", 1) or 0))
+        parts = ["🟢 纯本地解码", backend, gram]
+        if using_big:
+            parts.append("大模型")
+        parts.append("实时转写" if streaming else "整段转写")
+        if typing_on:
+            parts.append("⌨语音输入")
+        self.mode_label.configure(text=" · ".join(parts))
+        hint = "解码：纯本地（XOR+连续 IMA）｜识别：%s｜模式：%s｜模型：%s" % (
+            backend, "边说边转" if streaming else "松开后整段识别", model)
         if big_ready and not using_big:
             hint += "｜已装大模型，可在设置里把 model_dir 指向 vosk-model-cn-0.22"
         self.asr_hint.configure(text=hint)
