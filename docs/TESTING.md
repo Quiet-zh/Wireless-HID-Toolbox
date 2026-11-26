@@ -8,7 +8,7 @@ python -m unittest discover -s tests -v
 
 不依赖真实鼠标/键盘，也不需要管理员权限。GUI 相关功能需要手动验收。
 
-当前：**211 个自动化用例**。
+当前：**215 个自动化用例**。
 
 > 需要 `tkinter`（GUI 相关用例会自动跳过无 tkinter 的环境），
 > 不需要 vosk / websockets / numpy 等可选依赖。
@@ -29,6 +29,7 @@ python -m unittest discover -s tests -v
 | `test_registry.py` | 13 | 设备 key、名称、类型推断、旧名迁移、在线判定、删除/恢复 |
 | `test_theme.py` | 4 | 白天/黑夜配色映射与主色覆盖 |
 | `test_ui_common.py` | 5 | 按需滚动条 GUI 回归：显隐、横向、删除后复原 |
+| `test_startup_state.py` | 4 | 启动缓存快照、HID 在线不算休眠 |
 | `test_open_save_dir.py` | 6 | 一键打开保存目录 / 设置路径、缺目录提示 |
 | `test_asr_text.py` | 12 | 中文空格规整、英文保留、三处出口与兜底 |
 | `test_local_stream_decoder.py` | 11 | 增量解码字节级一致、流式 PCM 正确性 |

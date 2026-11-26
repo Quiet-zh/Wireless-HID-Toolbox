@@ -222,7 +222,11 @@ class DeviceCard(tk.Frame):
         self.sub_label.configure(
             text=f"{snap.key} · {snap.source or '等待设备'}")
         if snap.present:
-            if snap.no_battery_proto:
+            if snap.stale:
+                # HID 在线但这一轮没读到电量帧（如魔声每 2.5s 才上报一次）
+                stamp = time.strftime("%H:%M", time.localtime(snap.updated))
+                state, color = "已连接 · 电量待更新 %s" % stamp, themed(AMBER)
+            elif snap.no_battery_proto:
                 state, color = "在线 · 无电量协议", themed(FAINT)
             elif snap.charging is True:
                 state, color = "充电中", themed(GREEN)
@@ -234,7 +238,10 @@ class DeviceCard(tk.Frame):
                 state, color = "已连接", themed(FAINT)
         elif snap.stale:
             stamp = time.strftime("%H:%M", time.localtime(snap.updated))
-            state, color = f"休眠 · 上次更新 {stamp}", themed(AMBER)
+            if snap.status == "读取中":
+                state, color = f"读取中 · 上次 {stamp}", themed(FAINT)
+            else:
+                state, color = f"休眠 · 上次更新 {stamp}", themed(AMBER)
         else:
             state, color = "未连接", themed(RED if snap.show else FAINT)
         self.status_label.configure(text=state, fg=color)
@@ -317,7 +324,15 @@ class BatteryPanel(tk.Tk):
         if demo:
             self._apply_snaps(self._demo_snaps)
         else:
-            self._later(150, self.refresh)
+            # 先用 last_state 缓存瞬间画出首屏（毫秒级），
+            # 再让 refresh() 后台做真正的 HID 扫描（魔声最多等 1.5s）
+            try:
+                cached = dr.cached_snapshot()
+            except Exception:
+                cached = []
+            if cached:
+                self._apply_snaps(cached)
+            self._later(120, self.refresh)
             self._later(400, self._update_tray_button)
 
     # ---------------------------------------------------------------- UI

@@ -198,6 +198,39 @@ def _meta_defaults(devs: dict) -> dict:
     return {"show": True, "tray": True, "order": _next_order(devs)}
 
 
+def cached_snapshot() -> list[DeviceSnapshot]:
+    """**零 HID 读写**：仅用 last_state 缓存构造启动占位快照。
+
+    启动时先把它画出来（毫秒级），真正的 HID 扫描放到后台线程，
+    避免「魔声每 2.5s 才上报一次电量帧」拖慢首屏渲染。
+    """
+    cfg = tc.load_config()
+    devs = _ensure(cfg)
+    out: list[DeviceSnapshot] = []
+    for key, meta in sorted(devs.items(),
+                            key=lambda kv: (int(kv[1].get("order", 0)), kv[0])):
+        if not isinstance(meta, dict) or meta.get("deleted"):
+            continue
+        last = last_state.get(key)
+        if last is None and key == "3554:F517":
+            last = last_state.get("mouse")
+        elif last is None and key == "36B0:WAVE75":
+            last = last_state.get("keyboard")
+        if last is None:
+            continue                       # 没缓存的设备交给正式扫描补上
+        vid, pid = _ids(key)
+        out.append(DeviceSnapshot(
+            key=key,
+            name=meta.get("name") or friendly_name(key, key),
+            vid=vid, pid=pid, percent=last["percent"], charging=None,
+            status="读取中", source="上次缓存", link="—",
+            detail=last.get("detail", ""), updated=float(last["ts"]),
+            stale=True, present=False,
+            show=bool(meta.get("show", True)), tray=bool(meta.get("tray", True)),
+            kind=meta.get("kind") or infer_kind(key, meta.get("name", ""))))
+    return out
+
+
 def snapshot(fast: bool = False) -> list[DeviceSnapshot]:
     """扫描一次并返回所有已知设备的快照（含休眠缓存/离线占位）。"""
     cfg = tc.load_config()
@@ -266,11 +299,19 @@ def snapshot(fast: bool = False) -> list[DeviceSnapshot]:
             last = last_state.get("keyboard")
         if last is not None:
             vid, pid = _ids(key)
+            # HID 接口物理在线（如魔声 0xFF91 电量帧每 2.5s 才来一次，
+            # 一轮 fast 扫描可能刚好错过）→ 不能误报「休眠」。
+            # 仍在用缓存电量，但标 stale/present 让面板显示「待更新 · 在线」。
+            physically_online = key in present_keys
             out.append(DeviceSnapshot(
                 key=key, name=name, vid=vid, pid=pid, percent=last["percent"],
-                charging=None, status="休眠", source="上次缓存",
-                link="—", detail=last.get("detail", ""),
-                updated=float(last["ts"]), stale=True, present=False,
+                charging=None,
+                status=("在线 · 等待电量" if physically_online else "休眠"),
+                source="上次缓存",
+                link=_link_for(key, "", "", "") if physically_online else "—",
+                detail=last.get("detail", ""),
+                updated=float(last["ts"]), stale=True,
+                present=physically_online,
                 show=show, tray=tray, kind=kind))
             continue
 
