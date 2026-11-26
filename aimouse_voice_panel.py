@@ -550,6 +550,11 @@ class VoiceSettingsDialog(tk.Toplevel):
                       bg=themed(TRACK), fg=themed(SUB), relief="flat",
                       font=("Microsoft YaHei UI", 9), padx=10).pack(
                 side="left", padx=(8, 0))
+            tk.Button(row, text="📁 打开",
+                      command=lambda k=key: self._open_path(k),
+                      bg=themed(TRACK), fg=themed(SUB), relief="flat",
+                      font=("Microsoft YaHei UI", 9), padx=10).pack(
+                side="left", padx=(6, 0))
             return
 
         def bump(delta, v=var, s=step, lo_=lo, hi_=hi):
@@ -585,6 +590,27 @@ class VoiceSettingsDialog(tk.Toplevel):
             path = filedialog.askdirectory(initialdir=self.vars[key].get() or ".")
             if path:
                 self.vars[key].set(path)
+
+    def _open_path(self, key: str) -> None:
+        """在资源管理器中打开设置里的路径（save_dir / model_dir）。"""
+        path = self.vars[key].get().strip()
+        if not path:
+            return
+        if not os.path.isdir(path):
+            messagebox.showinfo("提示", "目录不存在：\n%s" % path,
+                                parent=self)
+            return
+        try:
+            starter = getattr(os, "startfile", None)
+            if starter is None:
+                messagebox.showinfo("提示", "仅支持 Windows 资源管理器",
+                                    parent=self)
+                return
+            starter(path)
+        except Exception as exc:
+            messagebox.showerror("打开失败",
+                                 "无法打开 %s：\n%r" % (path, exc),
+                                 parent=self)
 
     def _reset(self) -> None:
         for key, var in self.vars.items():
@@ -729,7 +755,8 @@ class VoiceWindow(tk.Toplevel):
         for text, cmd, color in (("▶ 播放", self._play, GREEN),
                                  ("■ 停止", self._stop_play, AMBER),
                                  ("文 转文字", self._transcribe, SUB),
-                                 ("🗑 删除", self._delete, RED)):
+                                 ("🗑 删除", self._delete, RED),
+                                 ("📁 目录", self._open_save_dir, SUB)):
             tk.Button(foot, text=text, command=cmd, bg=themed(TRACK),
                       fg=themed(color), activebackground=themed(CARD_EDGE),
                       relief="flat", font=("Microsoft YaHei UI", 10),
@@ -1033,6 +1060,23 @@ class VoiceWindow(tk.Toplevel):
                 self.after_idle(bar.refresh)
             except tk.TclError:
                 pass
+
+    def _open_save_dir(self) -> None:
+        """在资源管理器中打开当前音频保存目录。"""
+        save_dir = self.cfg.get("save_dir") or DEFAULT_SAVE
+        try:
+            os.makedirs(save_dir, exist_ok=True)
+            starter = getattr(os, "startfile", None)
+            if starter is None:
+                messagebox.showinfo("提示", "仅支持 Windows 资源管理器",
+                                    parent=self)
+                return
+            starter(save_dir)
+            self.status.configure(text="已打开保存目录", fg=themed(GREEN))
+        except Exception as exc:
+            messagebox.showerror(
+                "打开失败", "无法打开目录：\n%s\n\n%r" % (save_dir, exc),
+                parent=self)
 
     @staticmethod
     def _duration(path: str) -> str:

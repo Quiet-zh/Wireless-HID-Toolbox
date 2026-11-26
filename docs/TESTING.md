@@ -8,7 +8,7 @@ python -m unittest discover -s tests -v
 
 不依赖真实鼠标/键盘，也不需要管理员权限。GUI 相关功能需要手动验收。
 
-当前：**205 个自动化用例**。
+当前：**211 个自动化用例**。
 
 > 需要 `tkinter`（GUI 相关用例会自动跳过无 tkinter 的环境），
 > 不需要 vosk / websockets / numpy 等可选依赖。
@@ -29,6 +29,7 @@ python -m unittest discover -s tests -v
 | `test_registry.py` | 13 | 设备 key、名称、类型推断、旧名迁移、在线判定、删除/恢复 |
 | `test_theme.py` | 4 | 白天/黑夜配色映射与主色覆盖 |
 | `test_ui_common.py` | 5 | 按需滚动条 GUI 回归：显隐、横向、删除后复原 |
+| `test_open_save_dir.py` | 6 | 一键打开保存目录 / 设置路径、缺目录提示 |
 | `test_asr_text.py` | 12 | 中文空格规整、英文保留、三处出口与兜底 |
 | `test_local_stream_decoder.py` | 11 | 增量解码字节级一致、流式 PCM 正确性 |
 | `test_wheel_binding.py` | 4 | 设置对话框无全局滚轮绑定、销毁后不抛 TclError |
@@ -92,6 +93,8 @@ python tools\verify_local_decode.py
 
 - [ ] 顶部徽标显示当前模式（默认 `🟢 纯本地解码 · 仅本地 Vosk · 通用识别`）
 - [ ] 设置共 10 项参数，数值项带左右加减按钮，点「保存」才生效
+- [ ] 底部「📁 目录」按钮：在资源管理器中打开当前保存目录
+- [ ] 设置里路径项旁「📁 打开」按钮：打开实际路径，不存在时给出提示
 - [ ] 录音列表滚动条：3 条时隐藏、200 条时出现、删回少量后再隐藏
 - [ ] 设置对话框滚动条：参数未超高时隐藏
 - [ ] 长按语音键录音、**松开后立即出结果**（不再一直显示「处理中…」）
