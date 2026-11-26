@@ -139,6 +139,39 @@ class TestOnsetGate(unittest.TestCase):
         gate.push(av.samples_to_pcm16(silence(100, 100)))
         self.assertEqual(gate.dropped_sec, 0.0)
 
+    def test_flush_returns_buffered_audio(self):
+        """收尾必须能把还没放行的缓冲取出来，否则小声说话等于没输入。"""
+        gate = av.OnsetGate()
+        quiet = silence(300, 150)          # 低于阈值，门控一直不开
+        pcm = av.samples_to_pcm16(quiet)
+        self.assertEqual(gate.push(pcm), b"")
+        self.assertFalse(gate.opened)
+        rest = gate.flush()
+        self.assertEqual(rest, pcm)
+        self.assertTrue(gate.opened)
+
+    def test_flush_is_idempotent(self):
+        gate = av.OnsetGate()
+        gate.push(av.samples_to_pcm16(silence(200, 150)))
+        self.assertTrue(gate.flush())
+        self.assertEqual(gate.flush(), b"")
+
+    def test_flush_after_open_returns_nothing(self):
+        gate = av.OnsetGate()
+        gate.push(av.samples_to_pcm16(tone(300)))
+        self.assertTrue(gate.opened)
+        self.assertEqual(gate.flush(), b"")
+
+    def test_quiet_utterance_survives_flush(self):
+        """整段都很轻：门控不开，但 flush 后数据完整，识别才不会空。"""
+        gate = av.OnsetGate()
+        quiet = silence(400, 200)
+        got = bytearray()
+        for i in range(0, len(quiet), 56):
+            got.extend(gate.push(av.samples_to_pcm16(quiet[i:i + 56])))
+        got.extend(gate.flush())
+        self.assertEqual(len(av.pcm16_to_samples(got)), len(quiet))
+
 
 class TestOnsetWithRealFrames(unittest.TestCase):
     """用设备真实帧验证：底噪段应被裁掉，且保留有效语音。"""

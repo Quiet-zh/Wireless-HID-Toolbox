@@ -321,11 +321,19 @@ class SherpaAsrEngine:
         with self._lock:
             stream = self._stream
             rec = self._online
+            gate = self._gate
             self._stream = None
             self._gate = None
             if stream is None or rec is None:
                 return ""
             try:
+                # 门控还没打开（说话太轻/太短）时，缓冲里的音频要先补喂，
+                # 否则收尾时这段录音等于没送进引擎，结果会是空
+                if gate is not None and not gate.opened:
+                    rest = gate.flush()
+                    if rest:
+                        stream.accept_waveform(
+                            av.SAMPLE_RATE, av.pcm16_to_samples(rest))
                 pad = [0.0] * int(av.SAMPLE_RATE * _TAIL_PAD_SEC)
                 stream.accept_waveform(av.SAMPLE_RATE, pad)
                 while rec.is_ready(stream):

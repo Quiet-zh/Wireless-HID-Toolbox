@@ -341,6 +341,15 @@ class AsrEngine:
         with self._lock:
             if self._rec is None:
                 return ""
+            # 门控还没打开（说话太轻/太短）时先把缓冲补喂，否则等于没输入
+            gate = self._gate
+            if gate is not None and not gate.opened:
+                rest = gate.flush()
+                if rest:
+                    try:
+                        self._rec.AcceptWaveform(rest)
+                    except Exception:
+                        pass
             try:
                 text = normalize_asr_text(
                     json.loads(self._rec.FinalResult()).get("text", ""))
@@ -409,10 +418,13 @@ def make_asr_engine(cfg: dict):
             if eng.available():
                 return eng
             sherpa_error = eng.error or "不可用"
+        fallback = AsrEngine(model_dir, grammar)
         if prefer == 1:
-            fallback = AsrEngine(model_dir, grammar)
             fallback.error = "sherpa %s，已回退 Vosk" % sherpa_error
-            return fallback
+        else:
+            # 自动模式：不算错误，但记下原因，界面提示可下载模型提升准确率
+            fallback.sherpa_hint = sherpa_error
+        return fallback
     return AsrEngine(model_dir, grammar)
 
 
@@ -1376,6 +1388,10 @@ class VoiceWindow(tk.Toplevel):
         if (big_ready and not using_big
                 and getattr(self.asr, "name", "vosk") == "vosk"):
             hint += "｜已装大模型，可在设置里把 model_dir 指向 vosk-model-cn-0.22"
+        # 自动模式下退回 Vosk 时，提示有更高准确率的引擎可装
+        if getattr(self.asr, "sherpa_hint", ""):
+            hint += "｜未启用 sherpa（%s），可跑 tools\\download_models.py 下载模型提升准确率" % (
+                self.asr.sherpa_hint)
         # 引擎不可用的原因由 _start_monitor / _refresh_asr_state 提示，
         # 这里不调 available()（首次 import vosk 很慢，会卡住界面刷新）
         self.asr_hint.configure(text=hint)

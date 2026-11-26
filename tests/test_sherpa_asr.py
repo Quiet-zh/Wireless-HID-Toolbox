@@ -214,6 +214,46 @@ class TestTakePcm(_TmpModels):
         self.assertEqual(e.take_pcm(), b"")
 
 
+class TestFinishFlushesGate(_TmpModels):
+    """门控未打开时收尾必须把缓冲补喂给引擎，否则整段录音白录。"""
+
+    def _engine_with_fake_stream(self):
+        self.make_stream()
+        eng = sasr.SherpaAsrEngine(self.root)
+        stream = mock.Mock()
+        rec = mock.Mock()
+        rec.get_result.return_value = "你好"
+        rec.is_ready.return_value = False
+        eng._stream = stream
+        eng._online = rec
+        eng._gate = av.OnsetGate()
+        return eng, stream, rec
+
+    def test_flushes_when_gate_closed(self):
+        eng, stream, _ = self._engine_with_fake_stream()
+        quiet = av.samples_to_pcm16([0] * 400)
+        eng.feed(quiet)                       # 太轻，门控不打开
+        self.assertFalse(eng._gate.opened)
+        text = eng.finish()
+        self.assertEqual(text, "你好")
+        # 一次补喂缓冲 + 一次补尾部静音
+        self.assertGreaterEqual(stream.accept_waveform.call_count, 2)
+
+    def test_no_double_feed_when_gate_open(self):
+        eng, stream, _ = self._engine_with_fake_stream()
+        eng.feed(av.samples_to_pcm16([9000] * 4000))   # 高能量，门控打开
+        self.assertTrue(eng._gate.opened)
+        before = stream.accept_waveform.call_count
+        eng.finish()
+        # 只多了尾部静音那一次，没有重复补喂缓冲
+        self.assertEqual(stream.accept_waveform.call_count, before + 1)
+
+    def test_finish_without_session(self):
+        self.make_stream()
+        eng = sasr.SherpaAsrEngine(self.root)
+        self.assertEqual(eng.finish(), "")
+
+
 class TestMakeAsrEngine(_TmpModels):
     """面板工厂：按配置选引擎，缺依赖时回退 Vosk。"""
 
@@ -232,6 +272,21 @@ class TestMakeAsrEngine(_TmpModels):
         eng = vp.make_asr_engine(cfg)
         self.assertIsInstance(eng, vp.AsrEngine)
         self.assertIn("回退", eng.error)
+
+    def test_auto_records_sherpa_hint(self):
+        """自动模式退回 Vosk 时记下原因，界面据此提示可下载模型。"""
+        cfg = {"asr_engine": 0, "model_dir": "d", "asr_grammar": "",
+               "sherpa_model_dir": self.root}
+        eng = vp.make_asr_engine(cfg)
+        self.assertTrue(getattr(eng, "sherpa_hint", ""))
+        # 自动模式不该把回退当成错误弹给用户
+        self.assertEqual(eng.error, "")
+
+    def test_force_sherpa_has_no_hint(self):
+        cfg = {"asr_engine": 1, "model_dir": "d", "asr_grammar": "",
+               "sherpa_model_dir": self.root}
+        eng = vp.make_asr_engine(cfg)
+        self.assertEqual(getattr(eng, "sherpa_hint", ""), "")
 
     def test_engine_key_changes_with_preference(self):
         a = vp.asr_engine_key({"asr_engine": 0, "model_dir": "d"})

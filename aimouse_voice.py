@@ -339,6 +339,17 @@ class OnsetGate:
             return 0.0
         return self._dropped / 2.0 / self.rate
 
+    def flush(self) -> bytes:
+        """录音结束时取出全部剩余缓冲。
+
+        说话太轻 / 太短时门控可能还没打开，此时若直接收尾，缓冲里的音频
+        全部不会进引擎，结果是空——所以收尾必须先 flush 一次。
+        """
+        out = bytes(self._buf)
+        self._buf = bytearray()
+        self.opened = True
+        return out
+
     def push(self, pcm: bytes) -> bytes:
         """投递一段 PCM；返回本次应交给引擎的数据（可能为空）。"""
         if not pcm:
