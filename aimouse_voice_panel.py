@@ -754,7 +754,7 @@ class VoiceWindow(tk.Toplevel):
         foot.pack(fill="x", padx=18, pady=(0, 14))
         for text, cmd, color in (("▶ 播放", self._play, GREEN),
                                  ("■ 停止", self._stop_play, AMBER),
-                                 ("文 转文字", self._transcribe, SUB),
+                                 ("📝 转文字", self._transcribe, SUB),
                                  ("🗑 删除", self._delete, RED),
                                  ("📁 目录", self._open_save_dir, SUB)):
             tk.Button(foot, text=text, command=cmd, bg=themed(TRACK),
