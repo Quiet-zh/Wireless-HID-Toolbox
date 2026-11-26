@@ -11,6 +11,7 @@
 
 | 版本 | 本地提交 | 主题 |
 |---|---|---|
+| 1.14.3 | `待归档` | 修复滚轮绑定泄漏导致的 TclError 刷屏 |
 | 1.14.2 | `c023786` | 修复事件轮询异常导致语音功能整体失效 |
 | 1.14.1 | `7e8eab1` | 静音 Vosk 加载日志 |
 | 1.14.0 | `e14f215` | 流式/整段转文字模式开关 |
@@ -48,6 +49,27 @@
 | 0.3.0 | `4a225d7`、`8078a21` | PMO 键盘、双设备面板 |
 | 0.2.0 | `2ade088`、`53cdc2a` | Raw Input、可视化鼠标测试 |
 | 0.1.0 | `2e5e3c1`–`d8207d6` | 初版 CLI、Tk 面板、协议工具 |
+
+## 1.14.3 — 2026-11-26
+
+提交：`待归档`
+
+- 用户贴出终端反复刷屏 `Exception in Tkinter callback` /
+  `_tkinter.TclError: invalid command name
+  ".!voicewindow.!voicesettingsdialog.!frame2.!canvas"`
+- 根因：`VoiceSettingsDialog` 用 `canvas.bind_all("<MouseWheel>", ...)`
+  做**全局**滚轮绑定且销毁时没有 `unbind_all`；之后任意窗口滚动鼠标
+  都会调用已销毁 canvas 的 `yview_scroll`，持续抛异常
+- 修复：
+  - 改为 `self.bind("<MouseWheel>", handler)` 绑到对话框 toplevel
+    （Tk bindtags 会让子控件事件冒泡过来），控件销毁绑定自动消失
+  - handler 内 `winfo_exists()` 判断 + `except tk.TclError` 兜底
+  - `battery_panel` 的 `<Enter>/<Leave>` 全局绑定补 `<Destroy>` 兜底解绑，
+    `_on_wheel` 加 TclError 保护
+- 新增 `tests/test_wheel_binding.py` 4 个用例；端到端验证
+  「打开设置 → 关闭 → 滚轮 12 次」**异常数 0**
+- 测试数 178 → **182** 全绿，CLI `v1.14.3`
+- README / 能力总览 / 测试说明 / 打包说明 / 版本资源同步
 
 ## 1.14.2 — 2026-11-26
 

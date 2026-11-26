@@ -365,6 +365,10 @@ class BatteryPanel(tk.Tk):
             "<MouseWheel>", self._on_wheel))
         self.canvas.bind("<Leave>", lambda _e: self.canvas.unbind_all(
             "<MouseWheel>"))
+        # 窗口销毁时兜底解绑，避免鼠标仍在画布上就关窗留下全局绑定
+        self.canvas.bind("<Destroy>",
+                         lambda _e: self.canvas.unbind_all("<MouseWheel>"),
+                         add="+")
         self.inner.grid_columnconfigure(0, weight=1)
         self.inner.grid_columnconfigure(1, weight=1)
 
@@ -430,7 +434,10 @@ class BatteryPanel(tk.Tk):
 
     def _on_wheel(self, event):
         if self._scroll_visible:
-            self.canvas.yview_scroll(int(-event.delta / 120), "units")
+            try:
+                self.canvas.yview_scroll(int(-event.delta / 120), "units")
+            except tk.TclError:
+                pass
 
     # ------------------------------------------------------------- 刷新
     def refresh(self):

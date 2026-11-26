@@ -1,6 +1,6 @@
 # Wireless HID Toolbox（2.4G 外设工具箱）
 
-当前版本：**v1.14.2**（更新记录见 [CHANGELOG.md](CHANGELOG.md)）
+当前版本：**v1.14.3**（更新记录见 [CHANGELOG.md](CHANGELOG.md)）
 
 Windows 10/11 的 2.4G 无线外设电量与 HID 调试工具箱。纯 Python 标准库 +
 `ctypes` + `tkinter`，运行时不依赖任何第三方库。
@@ -466,7 +466,7 @@ python tray_app.py --quit
 python -m unittest discover -s tests -v
 ```
 
-共 **178** 个用例：
+共 **182** 个用例：
 
 - 8 个鼠标协议/电压曲线
 - 5 个 Raw Input 事件解析
@@ -486,6 +486,7 @@ python -m unittest discover -s tests -v
 - 10 个流式/整段转文字模式（录制启动分支、喂流门控、徽标）
 - 3 个 Vosk 日志静音（只设一次、缺失 API 容错、available 触发）
 - 9 个事件轮询健壮性与音频帧自动开录（异常隔离、重调度、冷却期）
+- 4 个设置对话框滚轮绑定（无全局绑定、销毁后无异常、重复开关）
 - 8 个设备目录/类型/删除恢复
 - 3 个 104 键布局数据
 - 4 个配置默认值/合并/主题回退

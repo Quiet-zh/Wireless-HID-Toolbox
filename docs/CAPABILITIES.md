@@ -108,7 +108,7 @@
 | `voice_typing.py` | 焦点捕获 + `SendInput` Unicode 键入（语音输入到任意输入框） |
 | `tools/verify_local_decode.py` | 独立验证纯本地解码链路（零依赖） |
 | `docs/AiMouse-RE-Notes.md` | 完整逆向过程、反汇编证据、协议细节 |
-| `tests/` | 178 个自动化用例 |
+| `tests/` | 182 个自动化用例 |
 
 ## 6. 验证与自检
 
@@ -143,3 +143,4 @@ python main.py --version
 | **1.14.0** | **流式 / 整段转文字模式开关（默认流式）** |
 | 1.14.1 | 静音 Vosk/Kaldi 模型加载日志 |
 | 1.14.2 | 修复事件轮询异常导致语音功能整体失效；协议兜底与抓帧诊断工具 |
+| 1.14.3 | 修复设置对话框 `bind_all` 滚轮绑定泄漏导致的 TclError 刷屏 |

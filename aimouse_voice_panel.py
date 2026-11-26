@@ -459,9 +459,16 @@ class VoiceSettingsDialog(tk.Toplevel):
         # 纵向滚动条仅在参数行总高超过对话框可视高度时显示
         attach_auto_scrollbar(body, canvas, orient="vertical",
                               layout="pack", side="right", fill="y")
-        canvas.bind_all("<MouseWheel>",
-                        lambda e: canvas.yview_scroll(int(-e.delta / 120),
-                                                      "units"))
+        # 绑定到对话框自身（Tk 的 bindtags 会让子控件的滚轮事件冒泡到
+        # toplevel），而不是 bind_all：后者是全局绑定，窗口销毁后不会自动
+        # 解绑，之后每次滚轮都会引用已销毁的 canvas 抛 TclError。
+        def on_wheel(event, c=canvas):
+            try:
+                if c.winfo_exists():
+                    c.yview_scroll(int(-event.delta / 120), "units")
+            except tk.TclError:
+                pass
+        self.bind("<MouseWheel>", on_wheel)
 
         for key, label, desc, default, lo, hi, step, kind in PARAM_DEFS:
             self._add_param(inner, key, label, desc, lo, hi, step, kind)
