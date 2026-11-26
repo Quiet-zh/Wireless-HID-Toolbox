@@ -53,6 +53,7 @@ DEFAULT_CONFIG = {
     "interval": 60,        # 托盘轮询间隔（秒）
     "autostart": True,     # 开机自启
     "theme": "dark",       # dark / light
+    "show_offline": False, # 未连接设备默认不在面板显示（设置里可开启）
     "devices": {},         # VID:PID -> {name, show, tray, order}
     "window": {            # 主界面标题栏按钮行为
         "minimize": "tray",    # tray / taskbar

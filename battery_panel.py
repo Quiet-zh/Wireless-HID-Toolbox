@@ -577,7 +577,12 @@ class BatteryPanel(tk.Tk):
             self._later(100, self.refresh)
 
     def _sync_cards(self):
-        visible = [s for s in self.snapshots if s.show]
+        # 未连接设备默认不显示；在线、休眠缓存（present=True）、
+        # 以及启动时的「读取中」占位仍显示。设置里可开启 show_offline。
+        show_offline = bool(tc.load_config().get("show_offline", False))
+        visible = [s for s in self.snapshots
+                   if s.show and (show_offline or s.present
+                                  or s.status == "读取中")]
         wanted = {s.key for s in visible}
         for key in list(self.cards):
             if key not in wanted:
@@ -1000,6 +1005,15 @@ class SettingsWindow(tk.Toplevel):
                   bg="#242a35", fg=SUB, relief="flat", bd=0,
                   font=("Microsoft YaHei UI", 9), padx=10, pady=3,
                   cursor="hand2").pack(side="left", padx=(8, 0))
+        self.show_offline_var = tk.BooleanVar(
+            value=bool(tc.load_config().get("show_offline", False)))
+        tk.Checkbutton(actions, text="显示未连接设备",
+                       variable=self.show_offline_var, bg=BG, fg=SUB,
+                       selectcolor=BG, activebackground=BG, activeforeground=TEXT,
+                       bd=0, highlightthickness=0,
+                       font=("Microsoft YaHei UI", 9),
+                       command=self._toggle_show_offline).pack(side="left",
+                                                               padx=(14, 0))
         self._reload_devices()
 
         # 托盘
@@ -1285,6 +1299,15 @@ class SettingsWindow(tk.Toplevel):
         self.boot_msg.configure(
             text=f"窗口按钮：- → {self.min_mode.get()}，× → {self.close_mode.get()}",
             fg=GREEN)
+
+    def _toggle_show_offline(self):
+        """显示/隐藏未连接设备：即时保存并刷新面板与托盘。"""
+        cfg = tc.load_config()
+        cfg["show_offline"] = bool(self.show_offline_var.get())
+        tc.save_config(cfg)
+        tc.post_to_tray(tc.MSG_RELOAD)
+        if self.parent:
+            self.parent._apply_snaps(self.parent.snapshots)
 
     def _interval_changed(self):
         seconds = parse_interval(self.interval_var.get())

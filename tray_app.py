@@ -220,7 +220,11 @@ class TrayApp:
         return bool(SHELL32.Shell_NotifyIconW(action, ctypes.byref(nid)))
 
     def _sync_icons(self) -> None:
-        desired = {k: s for k, s in self.snapshots.items() if s.tray}
+        # 与面板一致：未连接设备默认不显示；设置 show_offline 可开启
+        show_offline = bool(self.cfg.get("show_offline", False))
+        desired = {k: s for k, s in self.snapshots.items()
+                   if s.tray and (show_offline or s.present
+                                  or s.status == "读取中")}
         for key in list(self.icon_ids):
             if key in desired:
                 continue
