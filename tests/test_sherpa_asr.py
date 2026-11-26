@@ -311,6 +311,7 @@ class TestRefine(unittest.TestCase):
         win.asr = eng
         win.cfg = {"asr_refine": refine}
         win.events = mock.Mock()
+        win._refine_gen = 0
         return win, eng
 
     def test_skips_vosk_engine(self):
@@ -334,7 +335,8 @@ class TestRefine(unittest.TestCase):
         win._refine_async("刺试语音输入语二三")
         kind, payload = win.events.put.call_args[0][0]
         self.assertEqual(kind, "asr_refine")
-        fallback, better, err = payload
+        gen, fallback, better, err = payload
+        self.assertEqual(gen, 0)
         self.assertEqual(fallback, "刺试语音输入语二三")
         self.assertEqual(better, "测试语音输入123。")
         self.assertEqual(err, "")
@@ -345,7 +347,7 @@ class TestRefine(unittest.TestCase):
         win._refine_async("x")
         kind, payload = win.events.put.call_args[0][0]
         self.assertEqual(kind, "asr_refine")
-        self.assertIn("boom", payload[2])
+        self.assertIn("boom", payload[3])
 
     def test_skips_when_no_pcm(self):
         win, eng = self._window(pcm=b"")
@@ -360,25 +362,34 @@ class TestDispatchRefineEvent(unittest.TestCase):
         win = vp.VoiceWindow.__new__(vp.VoiceWindow)
         win.asr_hint = mock.Mock()
         win._publish_text = mock.Mock()
+        win._refine_gen = 3
         return win
 
     def test_overwrites_when_different(self):
         win = self._window()
-        win._dispatch(("asr_refine", ("刺试语音输入语二三", "测试语音输入123。", "")))
-        win._publish_text.assert_called_once_with("测试语音输入123。")
+        win._dispatch(("asr_refine", (3, "刺试语音输入语二三", "测试语音输入123。", "")))
+        win._publish_text.assert_called_once_with("测试语音输入123。",
+                                                   same_segment=True)
         self.assertIn("校正", win.asr_hint.configure.call_args[1]["text"])
 
     def test_no_republish_when_same(self):
         win = self._window()
-        win._dispatch(("asr_refine", ("测试语音输入123。", "测试语音输入123。", "")))
+        win._dispatch(("asr_refine", (3, "测试语音输入123。", "测试语音输入123。", "")))
         win._publish_text.assert_not_called()
         self.assertIn("复核", win.asr_hint.configure.call_args[1]["text"])
 
     def test_reports_error(self):
         win = self._window()
-        win._dispatch(("asr_refine", ("x", "", "boom")))
+        win._dispatch(("asr_refine", (3, "x", "", "boom")))
         win._publish_text.assert_not_called()
         self.assertIn("boom", win.asr_hint.configure.call_args[1]["text"])
+
+    def test_ignores_stale_generation(self):
+        """上一段的精修结果迟到时必须丢弃，不能去动新段的内容。"""
+        win = self._window()
+        win._dispatch(("asr_refine", (2, "旧段流式", "旧段精修", "")))
+        win._publish_text.assert_not_called()
+        win.asr_hint.configure.assert_not_called()
 
 
 class TestVoskEngineNames(unittest.TestCase):

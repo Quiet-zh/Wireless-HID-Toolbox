@@ -195,7 +195,7 @@ class TestNoDoubleTranscribe(unittest.TestCase):
         win = self._window(asr_active=True, final="测试语音输入")
         frame = b"\x1b" + bytes(32)
         win._on_segment([frame], 1.0, "按键抬起")
-        win._publish_text.assert_called_once_with("测试语音输入")
+        win._publish_text.assert_called_once_with("测试语音输入", same_segment=True)
         win._transcribe.assert_not_called()
 
 

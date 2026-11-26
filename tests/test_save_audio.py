@@ -82,7 +82,7 @@ class TestOnSegment(unittest.TestCase):
         win = _window(0, asr_active=True, final="测试结果", auto=1)
         with mock.patch.object(vp.av, "save_wav"):
             win._on_segment(self.FRAMES, 1.0, "按键抬起")
-        win._publish_text.assert_called_once_with("测试结果")
+        win._publish_text.assert_called_once_with("测试结果", same_segment=True)
         win._transcribe_samples.assert_not_called()
 
     def test_save_off_no_dir_created(self):

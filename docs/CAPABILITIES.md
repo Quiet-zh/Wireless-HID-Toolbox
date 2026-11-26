@@ -159,7 +159,7 @@ Vosk 方案：`vosk-model-small-cn-0.22`（42MB）。
 | `tools/download_models.py` | 下载 sherpa-onnx 中文模型（hf-mirror，可重跑续传） |
 | `tools/compare_asr.py` | 用真实抓包对比 sherpa / Vosk 的识别结果与耗时 |
 | `docs/AiMouse-RE-Notes.md` | 完整逆向过程、反汇编证据、协议细节 |
-| `tests/` | 357 个自动化用例 |
+| `tests/` | 366 个自动化用例 |
 
 ## 6. 验证与自检
 
@@ -215,3 +215,4 @@ python main.py --version
 | **1.21.0** | **前导静音门控（准确率最大杠杆）+ 集成 sherpa-onnx 引擎（流式 Paraformer / 整段 SenseVoice），Vosk 保留可回退** |
 | **1.22.0** | **收尾高精度校正：流式实时出字 + SenseVoice 定稿（实测 7/8 字 → 全对），下载工具改多线程分段** |
 | **1.23.0** | **门控改自适应（固定阈值实测不可用）+ 门控开关与灵敏度可调；流式结果再提升到只错 1 字** |
+| 1.23.1 | 修复流式输入 + 收尾精修导致文字输入两遍（发布时误清「已键入内容」） |

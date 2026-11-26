@@ -789,6 +789,7 @@ class VoiceWindow(tk.Toplevel):
         self._focus_poll_at = 0.0
         self._ui_tick = 0.0             # 音量条/部分结果节流时间戳
         self._stream_decoder = None      # 流式模式用的跨帧连续解码器
+        self._refine_gen = 0             # 段号：旧段的精修结果一律丢弃
         self.selected: Optional[str] = None
         self._build()
         self._refresh_mode()
@@ -979,12 +980,15 @@ class VoiceWindow(tk.Toplevel):
         elif kind == "asr_unavailable":
             self.asr_hint.configure(text=item[1])
         elif kind == "asr_refine":
-            fallback, better, err = item[1]
+            gen, fallback, better, err = item[1]
+            if gen != getattr(self, "_refine_gen", 0):
+                # 上一段的精修结果：用户已经开始说下一句，不能再动当前输入框
+                return
             if err:
                 self.asr_hint.configure(text="高精度校正失败：%s" % err)
             elif better and better != fallback:
                 # 只在确实不同才改，避免无谓地重排已键入的文字
-                self._publish_text(better)
+                self._publish_text(better, same_segment=True)
                 self.asr_hint.configure(
                     text="已用 SenseVoice 校正：%s" % better)
             elif better:
@@ -1031,6 +1035,8 @@ class VoiceWindow(tk.Toplevel):
         self._partial = ""
         self._asr_active = False
         self._reset_stream_typing()
+        # 换段：把上一段可能还在跑的精修结果作废（否则它会去动新段的内容）
+        self._refine_gen = getattr(self, "_refine_gen", 0) + 1
         # 记录剪贴板基线：官方驱动识别完成后会写入剪贴板
         self._clip_before = clipboard_sequence()
         streaming = bool(int(self.cfg.get("stream_asr", 1) or 0))
@@ -1140,7 +1146,8 @@ class VoiceWindow(tk.Toplevel):
             self.status.configure(
                 text="已录制 %.1f 秒（不保存语音）" % real, fg=themed(GREEN))
         if final:
-            self._publish_text(final)
+            # same_segment=True：本段流式已键入的内容要留着，精修才能只删差异
+            self._publish_text(final, same_segment=True)
             # 流式结果先出来（用户马上看到），再后台用高精度模型定稿
             self._refine_async(final)
         elif self._partial:
@@ -1177,15 +1184,16 @@ class VoiceWindow(tk.Toplevel):
             return
 
         def work():
+            gen = getattr(self, "_refine_gen", 0)
             try:
                 pcm = eng.take_pcm()
                 if not pcm:
                     return
                 better = eng.transcribe_samples(av.pcm16_to_samples(pcm))
             except Exception as exc:
-                self.events.put(("asr_refine", (fallback, "", str(exc))))
+                self.events.put(("asr_refine", (gen, fallback, "", str(exc))))
                 return
-            self.events.put(("asr_refine", (fallback, better or "", "")))
+            self.events.put(("asr_refine", (gen, fallback, better or "", "")))
 
         threading.Thread(target=work, daemon=True).start()
 
@@ -1261,8 +1269,14 @@ class VoiceWindow(tk.Toplevel):
             self._stream_type_failed = True
             self.asr_hint.configure(text="流式输入失败，本段停止自动键入")
 
-    def _publish_text(self, value: str) -> None:
-        """显示最终识别结果；开关打开时同时键入外部焦点输入框。"""
+    def _publish_text(self, value: str, same_segment: bool = False) -> None:
+        """显示最终识别结果；开关打开时同时键入外部焦点输入框。
+
+        ``same_segment=True`` 表示这是**同一段录音的二次发布**（收尾高精度
+        校正），此时输入框里已经有本段流式键入的内容，可以按差异退格纠正。
+        普通发布（手动转文字、整段识别结果）传 False——那种情况不知道输入框
+        里有什么，绝不能退格，否则会删掉用户自己的文字。
+        """
         value = normalize_asr_text(value)   # 兜底云端/剪贴板等所有来源
         if not value:
             self._reset_stream_typing()
@@ -1285,7 +1299,7 @@ class VoiceWindow(tk.Toplevel):
             return
 
         # 流式已键入一部分：只纠正差异，不重复整段
-        typed = getattr(self, "_typed_partial", "")
+        typed = getattr(self, "_typed_partial", "") if same_segment else ""
         to_type = value
         if typed and not self._stream_type_failed:
             common = 0
@@ -1303,12 +1317,17 @@ class VoiceWindow(tk.Toplevel):
             else:
                 to_type = value          # 退格失败，退回整段键入
 
-        self._reset_stream_typing()
+        # 同一段要记住「输入框里现在是什么」，精修才能只删差异；
+        # 普通发布到这儿就结束了，标记清空即可。清空不能放在同一段的
+        # 发布路径上：那会让精修误判成「没键入过」而整段重打，出现两遍。
         if not to_type:
+            self._typed_partial = value if same_segment else ""
             self.asr_hint.configure(text="语音输入：已实时键入完成")
             self.status.configure(text="已键入焦点输入框", fg=themed(GREEN))
             return
         ok, msg = vt.type_text(to_type, target)
+        # 键入失败时输入框内容不可知，清掉标记以免下次误退格删用户内容
+        self._typed_partial = value if (ok and same_segment) else ""
         self.asr_hint.configure(text="语音输入：%s" % msg)
         self.status.configure(text=("已键入焦点输入框" if ok else "键入失败"),
                               fg=themed(GREEN if ok else AMBER))
