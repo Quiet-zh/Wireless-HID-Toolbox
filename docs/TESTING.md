@@ -8,10 +8,11 @@ python -m unittest discover -s tests -v
 
 不依赖真实鼠标/键盘，也不需要管理员权限。GUI 相关功能需要手动验收。
 
-当前：**265 个自动化用例**。
+当前：**320 个自动化用例**。
 
 > 需要 `tkinter`（GUI 相关用例会自动跳过无 tkinter 的环境），
-> 不需要 vosk / websockets / numpy 等可选依赖。
+> 不需要 vosk / sherpa-onnx / websockets / numpy 等可选依赖——
+> 引擎相关用例用临时目录伪造模型结构，并 mock 掉缺失的包。
 
 ## 自动化覆盖
 
@@ -46,11 +47,15 @@ python -m unittest discover -s tests -v
 | `test_voice_typing.py` | 17 | Unicode INPUT 构造、surrogate、焦点过滤、开关分支 |
 | `test_version_packaging.py` | 3 | 版本号、Windows 版本资源、打包模式 |
 | `test_voice_panel.py` | 6 | 语音窗口参数定义与配置回读 |
+| `test_sherpa_asr.py` | 37 | sherpa 引擎：模型探测/int8 优先、就绪判定、缺模型不崩、音频预处理（多声道/8bit/重采样）、引擎工厂回退、Vosk/sherpa 公共属性 |
+| `test_onset_gate.py` | 18 | 前导静音门控：起点检测、回退保弱起、全静音不裁、max_wait 放行、reset、真实帧回归 |
 
 独立验证工具（不计入自动化用例）：
 
 ```bat
-python tools\verify_local_decode.py
+python tools\verify_local_decode.py   :: 解码链路回归（零依赖）
+python tools\download_models.py      :: 下载 sherpa 识别模型（可重跑续传）
+python tools\compare_asr.py          :: 用真实抓包对比 sherpa / Vosk 准确率与耗时
 ```
 
 ## 测试隔离

@@ -132,7 +132,10 @@ class TestSyncAsr(unittest.TestCase):
     def test_reuses_instance_when_model_unchanged(self):
         win = vp.VoiceWindow.__new__(vp.VoiceWindow)
         win.asr = vp.AsrEngine("d", "")
-        win.cfg = {"model_dir": "d", "asr_grammar": "测试,语音"}
+        # asr_engine=2 固定用 Vosk，避免受本机是否装了 sherpa 模型影响
+        win.cfg = {"model_dir": "d", "asr_grammar": "测试,语音",
+                   "asr_engine": 2}
+        win._asr_key = vp.asr_engine_key(win.cfg)
         win._sync_asr(warm=False)
         self.assertIs(win.asr.model_dir, "d")
         self.assertEqual(win.asr.grammar, "测试,语音")
@@ -141,7 +144,8 @@ class TestSyncAsr(unittest.TestCase):
         win = vp.VoiceWindow.__new__(vp.VoiceWindow)
         old = vp.AsrEngine("d1", "")
         win.asr = old
-        win.cfg = {"model_dir": "d2", "asr_grammar": ""}
+        win.cfg = {"model_dir": "d2", "asr_grammar": "", "asr_engine": 2}
+        win._asr_key = ("stale",)
         win._sync_asr(warm=False)
         self.assertIsNot(win.asr, old)
         self.assertEqual(win.asr.model_dir, "d2")

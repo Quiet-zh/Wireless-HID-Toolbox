@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """version.py —— 单一版本号来源。"""
 
-__version__ = "1.20.1"
-VERSION_TUPLE = (1, 20, 1, 0)
+__version__ = "1.21.0"
+VERSION_TUPLE = (1, 21, 0, 0)
 APP_DISPLAY_NAME = "Wireless HID Toolbox"
-BUILD_DATE = "2026-11-25"
+BUILD_DATE = "2026-11-26"

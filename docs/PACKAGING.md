@@ -56,10 +56,33 @@ build_exe.bat 2
 
 - `main.py` 统一入口
 - `app.ico` 图标
-- `version_info.txt` Windows 版本资源（当前 v1.20.1）
+- `version_info.txt` Windows 版本资源（当前 v1.21.0）
 - `--optimize 2`
 - 排除 unittest/doctest/pydoc/pdb/test
 - 隐藏导入：面板、托盘、鼠标键盘测试、HID 调试台、主题、协议模块
+
+## 可选：把识别引擎一起打包
+
+默认打包**不含**任何识别引擎——exe 里没有 vosk / sherpa-onnx 时语音窗口
+仍能录音、播放、导出 WAV，只是不转文字（面板会提示原因）。
+
+想把引擎一起打包，先装依赖再打包：
+
+```bat
+python -m pip install sherpa-onnx
+build_exe.bat
+```
+
+注意：
+
+- `sherpa-onnx` 是 C 扩展 + onnxruntime，PyInstaller 需要显式收集：
+  `--collect-all sherpa_onnx`（或 `hiddenimports` 里加 `sherpa_onnx`），
+  否则 exe 启动时报找不到 `_sherpa_onnx` / onnxruntime 的 dll
+- 体积会明显变大（sherpa-onnx 自带 onnxruntime，约 +30~80MB，视平台而定）
+- **模型不要打进 exe**：`sherpa_model_dir` 默认指向
+  `%APPDATA%\ExtBatteryTray\models`，让用户跑 `tools\download_models.py`
+  单独下载即可（流式 226MB + 整段 229MB，打进去会让 exe 变成几百 MB）
+- vosk 回退路径同理：只装 `vosk` 不打包模型
 
 ## exe 行为
 
@@ -76,7 +99,7 @@ dist\WirelessHIDToolbox.exe --tool mouse-test
 dist\WirelessHIDToolbox.exe --tool hid-debug
 ```
 
-- [ ] 标题显示 `外设电量 v1.20.1`
+- [ ] 标题显示 `外设电量 v1.21.0`
 - [ ] 主面板、设置、协议表可打开
 - [ ] 鼠标键盘测试和 HID 调试台可打开
 - [ ] 托盘启动/退出正常

@@ -48,6 +48,8 @@ MUTED = "#7d8499"
 CONFIG_PATH = os.path.join(tc.RUNTIME_DIR, "voice_config.json")
 DEFAULT_MODEL = os.path.join(tc.RUNTIME_DIR, "models", "vosk-model-small-cn-0.22")
 BIG_MODEL_DIR = os.path.join(tc.RUNTIME_DIR, "models", "vosk-model-cn-0.22")
+# sherpa-onnx 模型根目录：其下自动探测 streaming-paraformer / sense-voice
+DEFAULT_SHERPA_ROOT = os.path.join(tc.RUNTIME_DIR, "models")
 DEFAULT_SAVE = os.path.join(tc.RUNTIME_DIR, "voice")
 
 # Vosk 模型按目录全局缓存：大模型首次加载需 30~50 秒，
@@ -55,25 +57,15 @@ DEFAULT_SAVE = os.path.join(tc.RUNTIME_DIR, "voice")
 _MODEL_CACHE: dict[str, object] = {}
 _MODEL_LOCK = threading.Lock()
 _VOSK_QUIET = False
-_CJK_CHAR = r"[\u3400-\u4DBF\u4E00-\u9FFF\uF900-\uFAFF]"
 
 
 def normalize_asr_text(text: str) -> str:
     """规整识别结果：去掉中文词之间的空格，英文单词间空格保留。
 
-    Vosk 中文模型把 ``text`` 按词用空格拼接（「测试 语音 输入 一二三」）；
-    语音输入场景需要连续文本。中文与数字之间的空格也一并去掉。
+    实现在 :func:`aimouse_voice.normalize_asr_text`（Vosk / sherpa 共用），
+    这里保留同名函数，历史调用与测试无需改动。
     """
-    if not text:
-        return ""
-    # CJK 前后的空格一律去掉（「测试 语音」/「语音 123」/「123 输入」）
-    text = re.sub(rf"(?<={_CJK_CHAR})\s+(?=\S)", "", text)
-    text = re.sub(rf"(?<=\S)\s+(?={_CJK_CHAR})", "", text)
-    # 数字与字母、数字与数字之间的空格也去掉（「ABC 123」→「ABC123」）
-    text = re.sub(r"(?<=\d)\s+(?=[A-Za-z0-9])", "", text)
-    text = re.sub(r"(?<=[A-Za-z0-9])\s+(?=\d)", "", text)
-    # 英文单词之间的空格保留（「hello world」原样）
-    return text.strip()
+    return av.normalize_asr_text(text)
 
 
 def _quiet_vosk() -> None:
@@ -108,6 +100,11 @@ PARAM_DEFS = [
      DEFAULT_SAVE, None, None, None, "path"),
     ("model_dir", "识别模型目录", "Vosk 中文模型所在目录",
      DEFAULT_MODEL, None, None, None, "path"),
+    ("asr_engine", "识别引擎", "0 自动(sherpa优先) 1 强制sherpa 2 仅Vosk",
+     0, 0, 2, 1, "int"),
+    ("sherpa_model_dir", "sherpa模型目录",
+     "含 streaming-paraformer / sense-voice 子目录的根目录（自动探测）",
+     DEFAULT_SHERPA_ROOT, None, None, None, "path"),
     ("asr_backend", "识别后端", "0 自动(本地优先) 1 仅Vosk 2 剪贴板 3 云端",
      0, 0, 3, 1, "int"),
     ("local_only", "纯本地模式", "1=只用本地 Vosk，完全不联网/不读剪贴板；0=按识别后端设置",
@@ -222,6 +219,7 @@ class AsrEngine:
         self.grammar = grammar or ""
         self._model = None
         self._rec = None
+        self._gate = None            # 前导静音门控（begin 时创建）
         self._lock = threading.Lock()
         self.error = ""
 
@@ -254,8 +252,12 @@ class AsrEngine:
                 self._model = model
         return self._model
 
-    def preload(self) -> bool:
-        """后台预热模型；避免录音开始时才加载（大模型尤其明显）。"""
+    def preload(self, stream: Optional[bool] = None) -> bool:
+        """后台预热模型；避免录音开始时才加载（大模型尤其明显）。
+
+        ``stream`` 参数仅为与 sherpa 引擎接口对齐，Vosk 只有一个模型，
+        忽略该参数。
+        """
         if not self.available():
             return False
         try:
@@ -269,6 +271,19 @@ class AsrEngine:
         """Vosk 完整版大模型不支持 runtime grammar，仅 small 系列可用。"""
         return "small" in os.path.basename(
             os.path.normpath(self.model_dir)).lower()
+
+    @property
+    def name(self) -> str:
+        """引擎标识，与 sherpa 引擎保持一致。"""
+        return "vosk"
+
+    @property
+    def label(self) -> str:
+        return "Vosk"
+
+    def grammar_supported(self) -> bool:
+        """供面板统一查询；sherpa 引擎同名方法固定返回 False。"""
+        return self._grammar_supported()
 
     def _make_rec(self, KaldiRecognizer):
         """构造识别器；设置了词表且模型支持时启用 Vosk grammar 约束。"""
@@ -287,18 +302,27 @@ class AsrEngine:
         try:
             from vosk import KaldiRecognizer
             self._rec = self._make_rec(KaldiRecognizer)
+            self._gate = av.OnsetGate()
             return True
         except Exception as exc:
             self.error = str(exc)
             return False
 
     def feed(self, pcm: bytes) -> None:
-        """喂一段 PCM（每秒数百次，只投递不解析，避免重复 JSON 解码）。"""
+        """喂一段 PCM（每秒数百次，只投递不解析，避免重复 JSON 解码）。
+
+        前导静音先由 :class:`aimouse_voice.OnsetGate` 拦下：设备按下语音键
+        后有 1 秒多纯底噪，喂给模型会让句首「听出」不存在的字。
+        """
         with self._lock:
             if self._rec is None:
                 return
+            gate = getattr(self, "_gate", None)
+            data = gate.push(pcm) if gate is not None else pcm
+            if not data:
+                return
             try:
-                self._rec.AcceptWaveform(pcm)
+                self._rec.AcceptWaveform(data)
             except Exception:
                 pass
 
@@ -323,6 +347,7 @@ class AsrEngine:
             except Exception:
                 text = ""
             self._rec = None
+            self._gate = None
             return text
 
     def transcribe_samples(self, samples: list[int]) -> Optional[str]:
@@ -332,7 +357,8 @@ class AsrEngine:
         try:
             from vosk import KaldiRecognizer
             rec = self._make_rec(KaldiRecognizer)
-            pcm = av.samples_to_pcm16(samples)
+            # 前导静音必须裁掉，否则句首容易被识别成不存在的字
+            pcm = av.samples_to_pcm16(av.trim_leading_silence(samples))
             for i in range(0, len(pcm), 4000):
                 rec.AcceptWaveform(pcm[i:i + 4000])
             return normalize_asr_text(
@@ -349,16 +375,53 @@ class AsrEngine:
             from vosk import KaldiRecognizer
             rec = self._make_rec(KaldiRecognizer)
             with wave.open(wav_path, "rb") as fh:
-                while True:
-                    data = fh.readframes(4000)
-                    if not data:
-                        break
-                    rec.AcceptWaveform(data)
+                raw = fh.readframes(fh.getnframes())
+            # 同上：只裁整段开头的前导静音
+            pcm = av.trim_pcm(raw)
+            for i in range(0, len(pcm), 4000):
+                rec.AcceptWaveform(pcm[i:i + 4000])
             return normalize_asr_text(
                 json.loads(rec.FinalResult()).get("text", ""))
         except Exception as exc:
             self.error = str(exc)
             return None
+
+
+def make_asr_engine(cfg: dict):
+    """按配置创建识别引擎，sherpa 不可用时自动回退 Vosk。
+
+    ``asr_engine``：0 自动（sherpa 优先）/ 1 强制 sherpa / 2 仅 Vosk。
+    强制 sherpa 但依赖或模型缺失时仍回退 Vosk，并把原因写进 ``error``，
+    界面上能直接看到「为什么没用上 sherpa」，不会静默降级。
+    """
+    prefer = int(cfg.get("asr_engine", 0) or 0)
+    model_dir = cfg.get("model_dir", DEFAULT_MODEL)
+    grammar = cfg.get("asr_grammar", "")
+    if prefer in (0, 1):
+        root = cfg.get("sherpa_model_dir") or DEFAULT_SHERPA_ROOT
+        try:
+            import aimouse_sherpa_asr as sasr
+        except Exception as exc:      # 模块本身出问题也不能拖垮语音
+            sasr = None
+            sherpa_error = "无法导入 aimouse_sherpa_asr：%s" % exc
+        else:
+            eng = sasr.SherpaAsrEngine(root, grammar)
+            if eng.available():
+                return eng
+            sherpa_error = eng.error or "不可用"
+        if prefer == 1:
+            fallback = AsrEngine(model_dir, grammar)
+            fallback.error = "sherpa %s，已回退 Vosk" % sherpa_error
+            return fallback
+    return AsrEngine(model_dir, grammar)
+
+
+def asr_engine_key(cfg: dict) -> tuple:
+    """配置指纹：变了才重建引擎，避免每次保存设置都重新加载模型。"""
+    return (int(cfg.get("asr_engine", 0) or 0),
+            cfg.get("model_dir", DEFAULT_MODEL),
+            cfg.get("sherpa_model_dir") or DEFAULT_SHERPA_ROOT,
+            cfg.get("asr_grammar", ""))
 
 
 # ---------------------------------------------------------------------------
@@ -675,8 +738,8 @@ class VoiceWindow(tk.Toplevel):
         self.cfg = load_config()
         self.events: queue.Queue = queue.Queue()
         self.recorder: Optional[Recorder] = None
-        self.asr = AsrEngine(self.cfg.get("model_dir", DEFAULT_MODEL),
-                             self.cfg.get("asr_grammar", ""))
+        self.asr = make_asr_engine(self.cfg)
+        self._asr_key = asr_engine_key(self.cfg)
         self._asr_active = False
         self._partial = ""
         self._playing = False
@@ -799,16 +862,20 @@ class VoiceWindow(tk.Toplevel):
             self._stop_monitor()
 
     def _sync_asr(self, warm: bool = True) -> None:
-        """模型/词表没变就复用实例（避免重新加载大模型），并后台预热。"""
-        model_dir = self.cfg.get("model_dir", DEFAULT_MODEL)
-        grammar = self.cfg.get("asr_grammar", "")
-        if (getattr(self, "asr", None) is None
-                or self.asr.model_dir != model_dir):
-            self.asr = AsrEngine(model_dir, grammar)
+        """配置没变就复用实例（避免重新加载模型），并后台预热。"""
+        key = asr_engine_key(self.cfg)
+        if getattr(self, "asr", None) is None or getattr(self, "_asr_key", None) != key:
+            self.asr = make_asr_engine(self.cfg)
+            self._asr_key = key
         else:
-            self.asr.grammar = grammar
+            # 仅词表变化不需要重建引擎（sherpa 忽略词表，Vosk 下次 begin 生效）
+            self.asr.grammar = self.cfg.get("asr_grammar", "")
         if warm:
-            threading.Thread(target=self.asr.preload, daemon=True).start()
+            # 流式模式只需加载流式模型；两个 sherpa 模型同时驻留约 400MB
+            want_stream = bool(int(self.cfg.get("stream_asr", 1) or 0))
+            eng = self.asr
+            threading.Thread(target=eng.preload, args=(want_stream,),
+                             daemon=True).start()
 
     def _start_monitor(self) -> None:
         self.cfg = load_config()
@@ -822,7 +889,8 @@ class VoiceWindow(tk.Toplevel):
         self.status.configure(text="监测中 · 按住鼠标语音键说话", fg=themed(GREEN))
         if not self.asr.available():
             self.asr_hint.configure(
-                text="未启用语音识别（%s）：仅录音。装好 vosk 与中文模型后可用。"
+                text="未启用语音识别（%s）：仅录音。"
+                     "装上 sherpa-onnx 或 vosk 及中文模型后可用。"
                      % (self.asr.error or "不可用"))
 
     def _stop_monitor(self) -> None:
@@ -1029,16 +1097,17 @@ class VoiceWindow(tk.Toplevel):
                 text="本段未识别到文字（自动转文字已关闭）")
 
     def _transcribe_samples(self, samples: list[int]) -> None:
-        """不保存 WAV 时的整段识别：内存 PCM → Vosk → asr_text 事件。"""
+        """不保存 WAV 时的整段识别：内存 PCM → 本地引擎 → asr_text 事件。"""
         def work():
             text = (self.asr.transcribe_samples(samples)
                     if self.asr.available() else None)
             if text:
                 self.events.put(("asr_text", text))
-                self.events.put(("asr_backend", "Vosk（内存音频）"))
+                self.events.put(("asr_backend",
+                                 "%s（内存音频）" % getattr(self.asr, "label", "Vosk")))
             else:
                 self.events.put(("asr_unavailable",
-                                 "整段识别未得到文字（未保存语音，仅本地 Vosk）"))
+                                 "整段识别未得到文字（未保存语音，仅本地识别）"))
         threading.Thread(target=work, daemon=True).start()
 
     def _denoise(self, samples: list[int], strength: int) -> list[int]:
@@ -1272,28 +1341,31 @@ class VoiceWindow(tk.Toplevel):
     def _refresh_mode(self) -> None:
         """刷新顶部模式徽标与实时区的解码/后端提示。"""
         local = int(self.cfg.get("local_only", 1) or 0)
+        eng_label = getattr(self.asr, "label", "Vosk")
         if local:
-            backend = "仅本地 Vosk"
+            backend = "仅本地 %s" % eng_label
         else:
             backend = {0: "本地优先", 1: "Vosk", 2: "剪贴板",
                        3: "云端 ASR"}.get(
                 int(self.cfg.get("asr_backend", 0) or 0), "自动")
+            if backend == "Vosk":
+                backend = eng_label
         gram = ("词表限制" if (self.cfg.get("asr_grammar", "") or "").strip()
                 else "通用识别")
-        model = os.path.basename(os.path.normpath(
-            self.cfg.get("model_dir", DEFAULT_MODEL)))
         has_grammar = bool((self.cfg.get("asr_grammar", "") or "").strip())
-        # 大模型不支持 runtime grammar；同时提示用户可切换到已装的大模型
-        if has_grammar and not self.asr._grammar_supported():
-            gram = "词表不适用(大模型)"
+        # 大模型 / sherpa 都不支持 runtime grammar
+        if has_grammar and not self.asr.grammar_supported():
+            gram = "词表不适用(当前引擎)" if \
+                getattr(self.asr, "name", "vosk") != "vosk" else "词表不适用(大模型)"
         big_ready = os.path.isdir(BIG_MODEL_DIR)
         using_big = os.path.normpath(
             self.cfg.get("model_dir", DEFAULT_MODEL)) == os.path.normpath(
                 BIG_MODEL_DIR)
         typing_on = bool(int(self.cfg.get("voice_typing", 0) or 0))
         streaming = bool(int(self.cfg.get("stream_asr", 1) or 0))
+        model = self._model_caption()
         parts = ["🟢 纯本地解码", backend, gram]
-        if using_big:
+        if using_big and getattr(self.asr, "name", "vosk") == "vosk":
             parts.append("大模型")
         parts.append("实时转写" if streaming else "整段转写")
         if typing_on:
@@ -1301,9 +1373,24 @@ class VoiceWindow(tk.Toplevel):
         self.mode_label.configure(text=" · ".join(parts))
         hint = "解码：纯本地（XOR+连续 IMA）｜识别：%s｜模式：%s｜模型：%s" % (
             backend, "边说边转" if streaming else "松开后整段识别", model)
-        if big_ready and not using_big:
+        if (big_ready and not using_big
+                and getattr(self.asr, "name", "vosk") == "vosk"):
             hint += "｜已装大模型，可在设置里把 model_dir 指向 vosk-model-cn-0.22"
+        # 引擎不可用的原因由 _start_monitor / _refresh_asr_state 提示，
+        # 这里不调 available()（首次 import vosk 很慢，会卡住界面刷新）
         self.asr_hint.configure(text=hint)
+
+    def _model_caption(self) -> str:
+        """当前引擎实际使用的模型名，用于底部提示。"""
+        if getattr(self.asr, "name", "vosk") == "sherpa":
+            parts = []
+            if getattr(self.asr, "stream_ready", lambda: False)():
+                parts.append("paraformer 流式")
+            if getattr(self.asr, "offline_ready", lambda: False)():
+                parts.append("SenseVoice 整段")
+            return " + ".join(parts) or "未就绪"
+        return os.path.basename(os.path.normpath(
+            self.cfg.get("model_dir", DEFAULT_MODEL)))
 
     def _backend_chain(self, allow_clipboard: bool) -> list[str]:
         """按设置返回识别后端优先级；纯本地模式强制只用 Vosk。"""

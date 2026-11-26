@@ -22,6 +22,7 @@
 """
 from __future__ import annotations
 
+import re
 import struct
 from typing import Iterable, Optional
 
@@ -194,6 +195,187 @@ def split_segments(frames: list[bytes], gap_frames: int = 12) -> list[list[bytes
 def samples_to_pcm16(samples: Iterable[int]) -> bytes:
     """样本序列 -> little-endian 16bit PCM 字节流。"""
     return b"".join(struct.pack("<h", s) for s in samples)
+
+
+_CJK_CHAR = r"[\u3400-\u4DBF\u4E00-\u9FFF\uF900-\uFAFF]"
+
+
+def normalize_asr_text(text: str) -> str:
+    """规整识别结果：去掉中文词之间的空格，英文单词间空格保留。
+
+    Vosk 中文模型把 ``text`` 按词用空格拼接（「测试 语音 输入 一二三」）；
+    语音输入场景需要连续文本。中文与数字之间的空格也一并去掉。
+
+    sherpa-onnx 的中文输出本身是连续文本，这里同样适用（幂等）。
+    """
+    if not text:
+        return ""
+    # CJK 前后的空格一律去掉（「测试 语音」/「语音 123」/「123 输入」）
+    text = re.sub(rf"(?<={_CJK_CHAR})\s+(?=\S)", "", text)
+    text = re.sub(rf"(?<=\S)\s+(?={_CJK_CHAR})", "", text)
+    # 数字与字母、数字与数字之间的空格也去掉（「ABC 123」→「ABC123」）
+    text = re.sub(r"(?<=\d)\s+(?=[A-Za-z0-9])", "", text)
+    text = re.sub(r"(?<=[A-Za-z0-9])\s+(?=\d)", "", text)
+    # 英文单词之间的空格保留（「hello world」原样）
+    return text.strip()
+
+
+def pcm16_to_samples(pcm: bytes) -> list[int]:
+    """little-endian 16bit PCM 字节流 -> 样本列表。"""
+    if not pcm:
+        return []
+    usable = len(pcm) - (len(pcm) % 2)
+    return list(struct.unpack(f"<{usable // 2}h", pcm[:usable]))
+
+
+# ---------------------------------------------------------------------------
+# 语音起点门控（前导静音裁剪）
+#
+# 实测结论：设备按下语音键后有 1~1.5 秒纯底噪，这段静音喂给 ASR 会让模型
+# 在开头「听出」不存在的字（Vosk 小模型→「此事」/ sherpa→「请世」），
+# 整句准确率被拉低。裁掉前导静音后同一段音频：
+#
+#   Vosk 大模型   是语音输入一二三  →  测试语音输入一二三
+#   sherpa 流式   请世是语音输入与二 →  刺试语音输入一二三
+#
+# 阈值取底噪（RMS≈500~900）的数倍，连续两个 20ms 窗口超标才认作起点，
+# 起点前面再回退 120ms，避免削掉「测」这类弱起爆破音。
+# ---------------------------------------------------------------------------
+ONSET_HOP = 320             # 判定窗口 320 样本 = 20ms @16kHz
+ONSET_RMS_THRESHOLD = 3000  # 语音起点能量阈值（底噪的 4~6 倍）
+ONSET_NEED = 2              # 连续多少个窗口超标才认定起点
+ONSET_BACK_SEC = 0.12       # 起点前额外保留的时长
+ONSET_MAX_WAIT_SEC = 2.5    # 等这么久仍无起点就直接放行（避免吞掉整段）
+
+
+def pcm_rms(pcm: bytes) -> float:
+    """一段 int16 PCM 的均方根能量。"""
+    samples = pcm16_to_samples(pcm)
+    return samples_rms(samples)
+
+
+def samples_rms(samples) -> float:
+    if not samples:
+        return 0.0
+    return (sum(v * v for v in samples) / len(samples)) ** 0.5
+
+
+def find_onset(samples, threshold: float = ONSET_RMS_THRESHOLD,
+               hop: int = ONSET_HOP, need: int = ONSET_NEED,
+               back_sec: float = ONSET_BACK_SEC,
+               rate: int = SAMPLE_RATE) -> int:
+    """返回语音起点样本下标；找不到返回 0。
+
+    连续 ``need`` 个窗口超过 ``threshold`` 才算起点。认定后回退
+    ``need-1`` 个窗口 + ``back_sec``，确保判定期本身和弱起辅音都不被削掉。
+    """
+    if not samples:
+        return 0
+    hits = 0
+    for i in range(0, len(samples) - hop + 1, hop):
+        if samples_rms(samples[i:i + hop]) > threshold:
+            hits += 1
+            if hits >= need:
+                # i 是当前窗口起点；回退前面已判定通过的窗口 + back_sec
+                start = i - (hits - 1) * hop - int(rate * back_sec)
+                return max(0, start)
+        else:
+            hits = 0
+    return 0
+
+
+def trim_leading_silence(samples, **kw) -> list[int]:
+    """裁掉前导静音；整段都是静音时原样返回（交给下游判定为空）。"""
+    start = find_onset(samples, **kw)
+    return list(samples[start:]) if start else list(samples)
+
+
+def trim_pcm(pcm: bytes, **kw) -> bytes:
+    """按字节流裁前导静音（供整段识别路径使用）。"""
+    if not pcm:
+        return pcm
+    start = find_onset(pcm16_to_samples(pcm), **kw)
+    return pcm[start * 2:] if start else pcm
+
+
+class OnsetGate:
+    """流式喂数据时的语音起点门控：起点之前的静音不交给识别引擎。
+
+    实时性开销只有 ``ONSET_NEED × 20ms``，且起点会回退 ``back_sec``，
+    所以不会丢掉第一个字。等满 ``max_wait_sec`` 还没检测到起点时
+    直接放行全部缓冲，避免小声说话 / 环境噪声偏低时整段被吞。
+    """
+
+    def __init__(self, threshold: float = ONSET_RMS_THRESHOLD,
+                 hop: int = ONSET_HOP, need: int = ONSET_NEED,
+                 back_sec: float = ONSET_BACK_SEC,
+                 max_wait_sec: float = ONSET_MAX_WAIT_SEC,
+                 rate: int = SAMPLE_RATE):
+        self.threshold = threshold
+        self.hop = max(hop, 2)
+        self.need = max(need, 1)
+        self.back_sec = back_sec
+        self.max_wait_sec = max_wait_sec
+        self.rate = rate
+        self._buf = bytearray()
+        self._scan = 0
+        self._hits = 0
+        self._wait = 0.0
+        self._dropped = 0
+        self.opened = False
+
+    def reset(self) -> None:
+        self._buf = bytearray()
+        self._scan = 0
+        self._hits = 0
+        self._wait = 0.0
+        self._dropped = 0
+        self.opened = False
+
+    @property
+    def dropped_sec(self) -> float:
+        """已丢弃的前导静音时长（诊断用）。"""
+        if not self.opened or not self._dropped:
+            return 0.0
+        return self._dropped / 2.0 / self.rate
+
+    def push(self, pcm: bytes) -> bytes:
+        """投递一段 PCM；返回本次应交给引擎的数据（可能为空）。"""
+        if not pcm:
+            return b""
+        if self.opened:
+            return pcm
+        self._buf.extend(pcm)
+        self._wait += len(pcm) / 2.0 / self.rate
+        hop_bytes = self.hop * 2
+        while self._scan + hop_bytes <= len(self._buf):
+            seg = bytes(self._buf[self._scan:self._scan + hop_bytes])
+            if pcm_rms(seg) > self.threshold:
+                self._hits += 1
+            else:
+                self._hits = 0
+            self._scan += hop_bytes
+            if self._hits >= self.need:
+                self.opened = True
+                break
+
+        if self.opened:
+            # _scan 已越过 need 个窗口，回退这些窗口 + back_sec
+            start = self._scan - self.need * self.hop - int(
+                self.rate * self.back_sec)
+            start = max(0, start)
+            start -= start % 2          # 保证按 16bit 对齐
+            self._dropped = start
+            out = bytes(self._buf[start:])
+            self._buf = bytearray()
+            return out
+        if self._wait >= self.max_wait_sec:
+            self.opened = True
+            self._dropped = 0
+            out = bytes(self._buf)
+            self._buf = bytearray()
+            return out
+        return b""
 
 
 def pcm16_to_wav(pcm: bytes, rate: int = SAMPLE_RATE,
