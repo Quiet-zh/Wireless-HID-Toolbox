@@ -750,10 +750,20 @@ class BatteryPanel(tk.Tk):
                 return
             except tk.TclError:
                 self._voice_win = None
-        self._voice_win = avp.open_window(self, on_close=self._on_voice_closed)
+        self._voice_win = avp.open_window(
+            self, on_close=self._on_voice_closed,
+            on_hidden=self._on_voice_hidden)
 
     def _on_voice_closed(self):
         self._voice_win = None
+
+    def _on_voice_hidden(self):
+        """语音窗口不是关掉而是藏起来了，监测还在跑——提醒一下别忘。"""
+        try:
+            self.status_label.configure(
+                text="语音监测中（窗口已隐藏，点 🎤 可召回）", fg=AMBER)
+        except Exception:
+            pass
 
     def _open_settings(self):
         SettingsWindow(self, demo=self.demo, on_change=self._settings_changed)
@@ -842,6 +852,21 @@ class BatteryPanel(tk.Tk):
             self._ui_queue.put(("tray_for_close", ok))
 
         threading.Thread(target=worker, daemon=True).start()
+
+    def destroy(self):
+        """销毁前停掉可能还在跑的语音监测。
+
+        语音窗口开着「关闭界面后仍监测」时，它只是 withdraw，录音线程仍在
+        后台。主面板被销毁（退出/切到托盘）后这个隐藏窗口会一起消失，
+        线程若不明确停掉，正在录的一段就丢了。
+        """
+        rec = getattr(getattr(self, "_voice_win", None), "recorder", None)
+        if rec is not None:
+            try:
+                rec.stop()
+            except Exception:
+                pass
+        super().destroy()
 
     def _stop_tools(self):
         for pid in list(self._tool_pids):

@@ -103,6 +103,9 @@ PARAM_DEFS = [
      35, 10, 100, 5, "int"),
     ("max_seconds", "单次最长录制", "超过该秒数自动结束并保存",
      30, 5, 120, 5, "int"),
+    ("monitor_on_close", "关闭界面后仍监测",
+     "1=关闭语音窗口后继续监听语音键（窗口隐藏，点🎤可再打开）；0=关闭即停止监测",
+     0, 0, 1, 1, "bool"),
     ("save_audio", "保存语音文件", "1=录音保存为 WAV；0=只转文字不保存",
      1, 0, 1, 1, "bool"),
     ("save_dir", "音频保存目录", "录制文件存放位置（保存语音开启时有效）",
@@ -768,13 +771,14 @@ class VoiceSettingsDialog(tk.Toplevel):
 # 主窗口
 # ---------------------------------------------------------------------------
 class VoiceWindow(tk.Toplevel):
-    def __init__(self, parent, on_close=None):
+    def __init__(self, parent, on_close=None, on_hidden=None):
         super().__init__(parent)
         self.title("魔声 AI 垂直鼠标 · 语音")
         self.configure(bg=themed(BG))
         self.geometry("980x660")
         self.minsize(860, 560)
         self._on_close_cb = on_close
+        self._on_hidden_cb = on_hidden
         self.cfg = load_config()
         self.events: queue.Queue = queue.Queue()
         self.recorder: Optional[Recorder] = None
@@ -795,6 +799,9 @@ class VoiceWindow(tk.Toplevel):
         self._refresh_mode()
         theme.apply_new(self, "panel")
         self.protocol("WM_DELETE_WINDOW", self._close)
+        # 窗口从隐藏状态被召回时刷新列表/徽标：关闭界面后仍监测期间录的
+        # 文件要能立刻看到（<Map> 也会被子控件触发，需判断 event.widget）
+        self.bind("<Map>", self._on_map)
         self._poll()
 
     # -- UI ---------------------------------------------------------------
@@ -1584,7 +1591,46 @@ class VoiceWindow(tk.Toplevel):
             self.status.configure(text="设置已保存", fg=themed(GREEN))
         VoiceSettingsDialog(self, self.cfg, done)
 
+    def _on_map(self, event=None) -> None:
+        """窗口显示/召回时刷新内容（隐藏期间可能又录了几段）。"""
+        if event is not None and getattr(event, "widget", None) is not self:
+            return
+        try:
+            self._refresh_list()
+            self._refresh_mode()
+        except tk.TclError:
+            pass
+
+    def _keep_monitoring_on_close(self) -> bool:
+        """关闭窗口时是否只隐藏、继续监测。
+
+        只有「开关打开」且「当前确实在监测」时才隐藏：没在监测时关窗就正常
+        退出，否则会留下一个谁也看不见、什么也不做的隐藏窗口。
+        """
+        return (bool(int(self.cfg.get("monitor_on_close", 0) or 0))
+                and self.recorder is not None)
+
     def _close(self) -> None:
+        """窗口右上角关闭：按设置决定「只隐藏」还是「停止并销毁」。"""
+        if self._keep_monitoring_on_close():
+            # 只隐藏：录音线程与事件轮询继续跑，按语音键照常录音、识别、
+            # 保存、键入焦点输入框。再次点主界面 🎤 会用 deiconify 召回。
+            self.withdraw()
+            cb = getattr(self, "_on_hidden_cb", None)
+            if cb:
+                try:
+                    cb()
+                except Exception:
+                    pass
+            return
+        self.shutdown()
+
+    def shutdown(self) -> None:
+        """真正结束本窗口：停止监测与播放、通知主界面、销毁。
+
+        与 :meth:`_close` 分开是必要的——托盘/主界面退出时要走这条，
+        确保监测线程被明确停掉，而不是留个隐藏窗口在后台。
+        """
         self._stop_monitor()
         self._stop_play()
         try:
@@ -1596,5 +1642,5 @@ class VoiceWindow(tk.Toplevel):
         self.destroy()
 
 
-def open_window(parent, on_close=None) -> VoiceWindow:
-    return VoiceWindow(parent, on_close=on_close)
+def open_window(parent, on_close=None, on_hidden=None) -> VoiceWindow:
+    return VoiceWindow(parent, on_close=on_close, on_hidden=on_hidden)
