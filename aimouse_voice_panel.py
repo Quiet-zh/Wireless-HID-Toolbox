@@ -29,6 +29,7 @@ import aimouse_voice_capture as avc
 import hid_win as hw
 import theme
 import tray_common as tc
+import voice_typing as vt
 from ui_common import attach_auto_scrollbar
 
 BG = "#0f1115"
@@ -68,6 +69,8 @@ PARAM_DEFS = [
      0, 0, 3, 1, "int"),
     ("local_only", "纯本地模式", "1=只用本地 Vosk，完全不联网/不读剪贴板；0=按识别后端设置",
      1, 0, 1, 1, "bool"),
+    ("voice_typing", "语音输入到焦点", "1=识别后把文字键入当前焦点输入框；说话前请先点好目标输入框",
+     0, 0, 1, 1, "bool"),
     ("asr_grammar", "识别词表(可选)", "逗号分隔的候选词；留空=通用识别，填了可显著提升固定命令准确率",
      "", None, None, None, "text"),
 ]
@@ -517,6 +520,8 @@ class VoiceWindow(tk.Toplevel):
         self._partial = ""
         self._playing = False
         self._clip_before = 0
+        self._focus_target = None       # 最近一次的非本进程前台窗口
+        self._focus_poll_at = 0.0
         self.selected: Optional[str] = None
         self._build()
         self._refresh_mode()
@@ -655,6 +660,16 @@ class VoiceWindow(tk.Toplevel):
 
     # -- 事件轮询 ---------------------------------------------------------
     def _poll(self) -> None:
+        # 持续记录用户最近停留的「外部」输入框（每 0.4 秒一次）
+        now = time.monotonic()
+        if now - self._focus_poll_at >= 0.4:
+            self._focus_poll_at = now
+            try:
+                target = vt.track_focus(exclude_pid=os.getpid())
+                if target is not None:
+                    self._focus_target = target
+            except Exception:
+                pass
         try:
             while True:
                 item = self.events.get_nowait()
@@ -672,7 +687,7 @@ class VoiceWindow(tk.Toplevel):
                 elif kind == "asr_ready":
                     self._asr_active = True
                 elif kind == "asr_text":
-                    self._set_text(item[1])
+                    self._publish_text(item[1])
                 elif kind == "asr_backend":
                     self.asr_hint.configure(text="识别来源：%s" % item[1])
                     self.status.configure(text="识别完成 · %s" % item[1],
@@ -765,7 +780,7 @@ class VoiceWindow(tk.Toplevel):
             text="已保存 · %.1f 秒（%s）" % (real, reason or "正常结束"),
             fg=themed(GREEN))
         if final:
-            self._set_text(final)
+            self._publish_text(final)
         elif self._partial:
             self._set_text(self._partial)
         if int(self.cfg.get("auto_transcribe", 1) or 0) and not final:
@@ -792,6 +807,27 @@ class VoiceWindow(tk.Toplevel):
     def _set_text(self, value: str) -> None:
         self.text.delete("1.0", "end")
         self.text.insert("1.0", value)
+
+    def _publish_text(self, value: str) -> None:
+        """显示最终识别结果；开关打开时同时键入外部焦点输入框。"""
+        if not value:
+            return
+        self._set_text(value)
+        if not int(self.cfg.get("voice_typing", 0) or 0):
+            return
+        if not vt.supported():
+            self.asr_hint.configure(text="语音输入仅支持 Windows")
+            return
+        target = self._focus_target
+        if target is None:
+            self.asr_hint.configure(
+                text="语音输入：未检测到外部输入框，请说话前先点好目标输入框")
+            self.status.configure(text="未检测到外部输入框", fg=themed(AMBER))
+            return
+        ok, msg = vt.type_text(value, target)
+        self.asr_hint.configure(text="语音输入：%s" % msg)
+        self.status.configure(text=("已键入焦点输入框" if ok else "键入失败"),
+                              fg=themed(GREEN if ok else AMBER))
 
     # -- 列表与操作 -------------------------------------------------------
     def _refresh_list(self) -> None:
@@ -910,9 +946,11 @@ class VoiceWindow(tk.Toplevel):
         using_big = os.path.normpath(
             self.cfg.get("model_dir", DEFAULT_MODEL)) == os.path.normpath(
                 BIG_MODEL_DIR)
+        typing_on = bool(int(self.cfg.get("voice_typing", 0) or 0))
         self.mode_label.configure(
-            text="🟢 纯本地解码 · %s · %s%s" %
-                 (backend, gram, " · 大模型" if using_big else ""))
+            text="🟢 纯本地解码 · %s · %s%s%s" %
+                 (backend, gram, " · 大模型" if using_big else "",
+                  " · ⌨语音输入" if typing_on else ""))
         hint = "解码：纯本地（XOR+连续 IMA）｜识别：%s｜模型：%s" % (
             backend, model)
         if big_ready and not using_big:
