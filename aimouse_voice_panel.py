@@ -53,6 +53,20 @@ DEFAULT_SAVE = os.path.join(tc.RUNTIME_DIR, "voice")
 # 重开窗口 / 保存设置 / 开始监测都不应重复加载。
 _MODEL_CACHE: dict[str, object] = {}
 _MODEL_LOCK = threading.Lock()
+_VOSK_QUIET = False
+
+
+def _quiet_vosk() -> None:
+    """Kaldi/Vosk 默认往 stderr 打大量模型加载日志，静音一次即可。"""
+    global _VOSK_QUIET
+    if _VOSK_QUIET:
+        return
+    try:
+        from vosk import SetLogLevel
+        SetLogLevel(-1)
+        _VOSK_QUIET = True
+    except Exception:
+        pass
 
 # (键, 参数名, 中文描述, 默认值, 最小, 最大, 步长, 类型)
 PARAM_DEFS = [
@@ -195,6 +209,7 @@ class AsrEngine:
         except Exception:
             self.error = "未安装 vosk"
             return False
+        _quiet_vosk()
         if not os.path.isdir(self.model_dir):
             self.error = "模型目录不存在"
             return False
@@ -205,6 +220,7 @@ class AsrEngine:
             with _MODEL_LOCK:
                 model = _MODEL_CACHE.get(self.model_dir)
                 if model is None:
+                    _quiet_vosk()
                     from vosk import Model
                     model = Model(self.model_dir)
                     _MODEL_CACHE[self.model_dir] = model
