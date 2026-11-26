@@ -148,7 +148,7 @@ Vosk 方案：`vosk-model-small-cn-0.22`（42MB）。
 | `tools/download_models.py` | 下载 sherpa-onnx 中文模型（hf-mirror，可重跑续传） |
 | `tools/compare_asr.py` | 用真实抓包对比 sherpa / Vosk 的识别结果与耗时 |
 | `docs/AiMouse-RE-Notes.md` | 完整逆向过程、反汇编证据、协议细节 |
-| `tests/` | 320 个自动化用例 |
+| `tests/` | 329 个自动化用例 |
 
 ## 6. 验证与自检
 
