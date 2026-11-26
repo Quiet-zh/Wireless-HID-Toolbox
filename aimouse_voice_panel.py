@@ -49,6 +49,11 @@ DEFAULT_MODEL = os.path.join(tc.RUNTIME_DIR, "models", "vosk-model-small-cn-0.22
 BIG_MODEL_DIR = os.path.join(tc.RUNTIME_DIR, "models", "vosk-model-cn-0.22")
 DEFAULT_SAVE = os.path.join(tc.RUNTIME_DIR, "voice")
 
+# Vosk 模型按目录全局缓存：大模型首次加载需 30~50 秒，
+# 重开窗口 / 保存设置 / 开始监测都不应重复加载。
+_MODEL_CACHE: dict[str, object] = {}
+_MODEL_LOCK = threading.Lock()
+
 # (键, 参数名, 中文描述, 默认值, 最小, 最大, 步长, 类型)
 PARAM_DEFS = [
     ("highpass", "高通截止频率", "去除低频轰鸣；0 表示关闭，单位 Hz",
@@ -195,9 +200,25 @@ class AsrEngine:
 
     def _ensure_model(self):
         if self._model is None:
-            from vosk import Model
-            self._model = Model(self.model_dir)
+            with _MODEL_LOCK:
+                model = _MODEL_CACHE.get(self.model_dir)
+                if model is None:
+                    from vosk import Model
+                    model = Model(self.model_dir)
+                    _MODEL_CACHE[self.model_dir] = model
+                self._model = model
         return self._model
+
+    def preload(self) -> bool:
+        """后台预热模型；避免录音开始时才加载（大模型尤其明显）。"""
+        if not self.available():
+            return False
+        try:
+            self._ensure_model()
+            return True
+        except Exception as exc:
+            self.error = str(exc)
+            return False
 
     def _grammar_supported(self) -> bool:
         """Vosk 完整版大模型不支持 runtime grammar，仅 small 系列可用。"""
@@ -226,13 +247,22 @@ class AsrEngine:
             self.error = str(exc)
             return False
 
-    def feed(self, pcm: bytes) -> str:
-        """喂一段 PCM，返回当前部分识别结果。"""
+    def feed(self, pcm: bytes) -> None:
+        """喂一段 PCM（每秒数百次，只投递不解析，避免重复 JSON 解码）。"""
+        with self._lock:
+            if self._rec is None:
+                return
+            try:
+                self._rec.AcceptWaveform(pcm)
+            except Exception:
+                pass
+
+    def partial(self) -> str:
+        """取当前部分识别结果；由 UI 以约 10Hz 节流调用。"""
         with self._lock:
             if self._rec is None:
                 return ""
             try:
-                self._rec.AcceptWaveform(pcm)
                 return json.loads(self._rec.PartialResult()).get("partial", "")
             except Exception:
                 return ""
@@ -282,6 +312,7 @@ class Recorder(threading.Thread):
         self._frames: list[bytes] = []
         self._start_ts = 0.0
         self._last_ts = 0.0
+        self._finish_at = 0.0      # 按键抬起后的延迟收尾时间戳
 
     def stop(self) -> None:
         self._stop.set()
@@ -295,6 +326,22 @@ class Recorder(threading.Thread):
         dur = time.monotonic() - self._start_ts
         self.events.put(("segment", frames, dur, reason))
 
+    def note_key(self, arg: int, now: float) -> None:
+        """记录「长按抬起」：安排 150ms 后收尾，不再等设备补发状态帧。"""
+        if arg in (0x38, 0x32) and self._recording and not self._finish_at:
+            self._finish_at = now + 0.15
+
+    def _check_finish(self, now: float) -> None:
+        """收尾判定，必须在每轮循环开头调用（音频帧分支会 continue）。"""
+        if self._finish_at and now >= self._finish_at:
+            self._finish("按键抬起")
+            self._finish_at = 0.0
+        elif self._recording:
+            if now - self._last_ts > 0.6:
+                self._finish("音频中断")
+            elif now - self._start_ts > self.max_seconds:
+                self._finish("达到时长上限")
+
     def run(self) -> None:
         iface = avc.find_interface()
         if iface is None:
@@ -304,6 +351,9 @@ class Recorder(threading.Thread):
             with hw.HidDevice(iface.path, write=False) as dev:
                 while not self._stop.is_set():
                     now = time.monotonic()
+                    # 收尾判定必须放在循环开头：音频帧分支会 continue，
+                    # 若放在末尾，设备持续发 0x1B 帧时永远检查不到。
+                    self._check_finish(now)
                     report = dev.read_input(timeout_ms=80)
                     if report:
                         data = bytes(report)
@@ -321,16 +371,14 @@ class Recorder(threading.Thread):
                                     self._frames = []
                                     self._start_ts = now
                                     self._last_ts = now
+                                    self._finish_at = 0.0
                                     self.events.put(("start", None))
                             elif cmd == 0x05 and arg == 0x63:
                                 self._finish()
+                                self._finish_at = 0.0
                             elif cmd == 0x04:
                                 self.events.put(("key", arg))
-                    if self._recording:
-                        if now - self._last_ts > 1.5:
-                            self._finish("音频中断")
-                        elif now - self._start_ts > self.max_seconds:
-                            self._finish("达到时长上限")
+                                self.note_key(arg, now)
         except Exception as exc:
             self.events.put(("error", "录音线程异常: %r" % exc))
         finally:
@@ -522,6 +570,7 @@ class VoiceWindow(tk.Toplevel):
         self._clip_before = 0
         self._focus_target = None       # 最近一次的非本进程前台窗口
         self._focus_poll_at = 0.0
+        self._ui_tick = 0.0             # 音量条/部分结果节流时间戳
         self.selected: Optional[str] = None
         self._build()
         self._refresh_mode()
@@ -634,10 +683,21 @@ class VoiceWindow(tk.Toplevel):
         else:
             self._stop_monitor()
 
+    def _sync_asr(self, warm: bool = True) -> None:
+        """模型/词表没变就复用实例（避免重新加载大模型），并后台预热。"""
+        model_dir = self.cfg.get("model_dir", DEFAULT_MODEL)
+        grammar = self.cfg.get("asr_grammar", "")
+        if (getattr(self, "asr", None) is None
+                or self.asr.model_dir != model_dir):
+            self.asr = AsrEngine(model_dir, grammar)
+        else:
+            self.asr.grammar = grammar
+        if warm:
+            threading.Thread(target=self.asr.preload, daemon=True).start()
+
     def _start_monitor(self) -> None:
         self.cfg = load_config()
-        self.asr = AsrEngine(self.cfg.get("model_dir", DEFAULT_MODEL),
-                             self.cfg.get("asr_grammar", ""))
+        self._sync_asr()
         self._refresh_mode()
         self.recorder = Recorder(self.events,
                                  int(self.cfg.get("max_seconds", 30)))
@@ -670,9 +730,11 @@ class VoiceWindow(tk.Toplevel):
                     self._focus_target = target
             except Exception:
                 pass
+        budget = 120          # 单轮上限，避免音频帧洪泛饿死 segment/其它事件
         try:
-            while True:
+            while budget > 0:
                 item = self.events.get_nowait()
+                budget -= 1
                 kind = item[0]
                 if kind == "start":
                     self._on_rec_start()
@@ -697,7 +759,8 @@ class VoiceWindow(tk.Toplevel):
         except queue.Empty:
             pass
         try:
-            self.after(80, self._poll)
+            # 还有积压就尽快续处理，否则回到常规 40ms 节奏
+            self.after(0 if not self.events.empty() else 40, self._poll)
         except tk.TclError:
             pass
 
@@ -722,6 +785,14 @@ class VoiceWindow(tk.Toplevel):
         samples = av.decode_frame(frame)
         if not samples:
             return
+        if self._asr_active:
+            # 每帧都要喂（连续流不能丢），但不解析部分结果
+            self.asr.feed(av.samples_to_pcm16(samples))
+        # 音量条与部分结果约 10Hz 更新即可，避免每秒数百次 Tk 刷新
+        now = time.monotonic()
+        if now - self._ui_tick < 0.1:
+            return
+        self._ui_tick = now
         peak = max(abs(s) for s in samples) or 1
         width = self.meter.winfo_width() or 300
         self.meter.coords(self.meter_fill, 0, 0,
@@ -730,8 +801,7 @@ class VoiceWindow(tk.Toplevel):
             self.meter_fill,
             fill=themed(GREEN if peak < 24000 else AMBER))
         if self._asr_active:
-            pcm = av.samples_to_pcm16(samples)
-            partial = self.asr.feed(pcm)
+            partial = self.asr.partial()
             if partial and partial != self._partial:
                 self._partial = partial
                 self._set_text(partial)
@@ -744,11 +814,12 @@ class VoiceWindow(tk.Toplevel):
             self.status.configure(text="● 录音中… (%s)" % label,
                                   fg=themed(RED))
         elif arg in (0x38, 0x32):
-            self.status.configure(text="处理中…", fg=themed(AMBER))
+            self.status.configure(text="松开 · 处理中…", fg=themed(AMBER))
 
     def _on_segment(self, frames: list, duration: float, reason: str) -> None:
+        had_stream = self._asr_active      # 流式识别是否真的跑过
         final = ""
-        if self._asr_active:
+        if had_stream:
             final = self.asr.finish()
         self._asr_active = False
         self.meter.coords(self.meter_fill, 0, 0, 0, 16)
@@ -783,8 +854,13 @@ class VoiceWindow(tk.Toplevel):
             self._publish_text(final)
         elif self._partial:
             self._set_text(self._partial)
-        if int(self.cfg.get("auto_transcribe", 1) or 0) and not final:
+        # 只有流式识别从未启动时才补一次文件识别；
+        # 已经跑过一遍就不再重复（Vosk 每 5 秒音频约需 1.8 秒）
+        if int(self.cfg.get("auto_transcribe", 1) or 0) and not had_stream:
             self._transcribe(allow_clipboard=True)
+        elif had_stream and not final:
+            self.asr_hint.configure(
+                text="本段已完成识别但未得到文字（已跳过重复识别以免拖慢）")
 
     def _denoise(self, samples: list[int], strength: int) -> list[int]:
         try:
@@ -859,6 +935,11 @@ class VoiceWindow(tk.Toplevel):
     @staticmethod
     def _duration(path: str) -> str:
         try:
+            # 16kHz / 16bit / 单声道 WAV：44 字节头 + 32000 字节/秒。
+            # 列表可能有很多录音，直接按文件大小估算，避免逐个 wave.open。
+            seconds = (os.path.getsize(path) - 44) / 32000.0
+            if 0 <= seconds < 3600:
+                return "%5.1fs" % seconds
             with wave.open(path, "rb") as fh:
                 seconds = fh.getnframes() / float(fh.getframerate())
             return "%5.1fs" % seconds
@@ -1023,8 +1104,7 @@ class VoiceWindow(tk.Toplevel):
         def done(cfg):
             save_config(cfg)
             self.cfg = cfg
-            self.asr = AsrEngine(cfg.get("model_dir", DEFAULT_MODEL),
-                                 cfg.get("asr_grammar", ""))
+            self._sync_asr()
             self._refresh_mode()
             self._refresh_list()
             self.status.configure(text="设置已保存", fg=themed(GREEN))

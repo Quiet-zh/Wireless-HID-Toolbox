@@ -8,7 +8,7 @@ python -m unittest discover -s tests -v
 
 不依赖真实鼠标/键盘，也不需要管理员权限。GUI 相关功能需要手动验收。
 
-当前：**139 个自动化用例**。
+当前：**156 个自动化用例**。
 
 > 需要 `tkinter`（GUI 相关用例会自动跳过无 tkinter 的环境），
 > 不需要 vosk / websockets / numpy 等可选依赖。
@@ -29,6 +29,7 @@ python -m unittest discover -s tests -v
 | `test_registry.py` | 13 | 设备 key、名称、类型推断、旧名迁移、在线判定、删除/恢复 |
 | `test_theme.py` | 4 | 白天/黑夜配色映射与主色覆盖 |
 | `test_ui_common.py` | 5 | 按需滚动条 GUI 回归：显隐、横向、删除后复原 |
+| `test_voice_perf.py` | 17 | 录制收尾状态机、模型缓存、避免重复识别、时长估算 |
 | `test_voice_typing.py` | 17 | Unicode INPUT 构造、surrogate、焦点过滤、开关分支 |
 | `test_version_packaging.py` | 3 | 版本号、Windows 版本资源、打包模式 |
 | `test_voice_panel.py` | 6 | 语音窗口参数定义与配置回读 |
@@ -87,7 +88,8 @@ python tools\verify_local_decode.py
 - [ ] 设置共 10 项参数，数值项带左右加减按钮，点「保存」才生效
 - [ ] 录音列表滚动条：3 条时隐藏、200 条时出现、删回少量后再隐藏
 - [ ] 设置对话框滚动条：参数未超高时隐藏
-- [ ] 长按语音键录音、松开保存 WAV；列表播放/停止/删除/转文字
+- [ ] 长按语音键录音、**松开后立即出结果**（不再一直显示「处理中…」）
+- [ ] 连续多次录音，模型不重复加载、不重复识别；列表播放/停止/删除/转文字
 - [ ] `local_only=1` 时不联网、不读剪贴板；设为 0 后按后端链降级
 - [ ] 填词表后固定命令识别正确；切到大模型时提示「词表不适用」
 - [ ] 检测到大模型已装未启用时，实时区给出 `model_dir` 切换提示
