@@ -18,6 +18,18 @@ from version import __version__, APP_DISPLAY_NAME
 
 
 def main(argv=None) -> int:
+    """统一入口；Ctrl+C 直接安静退出，不把 KeyboardInterrupt 打成 traceback。"""
+    try:
+        return _main(argv)
+    except KeyboardInterrupt:
+        try:
+            print("\n已中断，退出。")
+        except Exception:
+            pass
+        return 130
+
+
+def _main(argv=None) -> int:
     parser = argparse.ArgumentParser(description="Wireless HID Toolbox")
     parser.add_argument("--version", action="store_true", help="打印版本")
     parser.add_argument("--tool", default="panel",

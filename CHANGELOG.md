@@ -11,6 +11,7 @@
 
 | 版本 | 本地提交 | 主题 |
 |---|---|---|
+| 1.18.1 | `待归档` | Ctrl+C 安静退出 |
 | 1.18.0 | `6ca2a73` | 未连接设备默认不显示 |
 | 1.17.0 | `5c0bd1d` | 刷新间隔可输入秒数并自动转分钟 |
 | 1.16.0 | `e9a8f89` | 启动首屏秒开 + 休眠误判修复 |
@@ -56,6 +57,24 @@
 | 0.3.0 | `4a225d7`、`8078a21` | PMO 键盘、双设备面板 |
 | 0.2.0 | `2ade088`、`53cdc2a` | Raw Input、可视化鼠标测试 |
 | 0.1.0 | `2e5e3c1`–`d8207d6` | 初版 CLI、Tk 面板、协议工具 |
+
+## 1.18.1 — 2026-11-26
+
+提交：`待归档`
+
+- 用户贴出 traceback：`aimouse_voice_panel.py:228 available()` 的
+  `import vosk` 在 Ctrl+C 时卡在 `importlib._lock_unlock_module.acquire`，
+  `KeyboardInterrupt` 冒泡到 Tk 回调打印堆栈
+- 说明：这是**退出时撞上后台线程首次 import vosk 的导入锁**，不是功能故障
+- 修复：
+  - `AsrEngine.available()` 与 `_quiet_vosk()` 显式捕获 `KeyboardInterrupt`
+    （前者返回 `False` / `error="已中断"`，后者静默跳过）
+  - `main.py` 拆出 `_main()`，外层统一捕获 `KeyboardInterrupt` →
+    打印「已中断，退出。」并返回退出码 130
+  - `battery_panel.main()` 的 `mainloop()` 也捕获 `KeyboardInterrupt`，
+    安静 `destroy()` 窗口后返回 0
+- 新增 `tests/test_keyboard_interrupt.py` 5 例，测试数 233 → **238**
+- README / 能力总览 / 测试说明 / 打包说明 / 版本资源同步，版本升至 1.18.1
 
 ## 1.18.0 — 2026-11-26
 

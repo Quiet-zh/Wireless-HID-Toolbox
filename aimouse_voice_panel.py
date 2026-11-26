@@ -85,7 +85,7 @@ def _quiet_vosk() -> None:
         from vosk import SetLogLevel
         SetLogLevel(-1)
         _VOSK_QUIET = True
-    except Exception:
+    except (KeyboardInterrupt, Exception):
         pass
 
 # (键, 参数名, 中文描述, 默认值, 最小, 最大, 步长, 类型)
@@ -226,6 +226,11 @@ class AsrEngine:
     def available(self) -> bool:
         try:
             import vosk  # noqa: F401
+        except KeyboardInterrupt:
+            # Ctrl+C 恰好落在模块导入锁上（后台线程首次 import vosk 较慢）：
+            # 视为用户中断，安静返回，不让 KeyboardInterrupt 冒泡到 Tk 回调
+            self.error = "已中断"
+            return False
         except Exception:
             self.error = "未安装 vosk"
             return False

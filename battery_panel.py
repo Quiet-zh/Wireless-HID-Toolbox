@@ -1371,7 +1371,14 @@ def main(argv=None) -> int:
     parser.add_argument("--demo", action="store_true", help="演示数据预览")
     args = parser.parse_args(argv)
     app = BatteryPanel(demo=args.demo)
-    app.mainloop()
+    try:
+        app.mainloop()
+    except KeyboardInterrupt:
+        # Ctrl+C 安静退出，不把中断打成 Tk 回调 traceback
+        try:
+            app.destroy()
+        except Exception:
+            pass
     return 0
 
 
