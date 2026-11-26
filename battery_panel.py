@@ -10,6 +10,7 @@ import argparse
 import ctypes
 import os
 import queue
+import re
 import subprocess
 import sys
 import threading
@@ -36,8 +37,10 @@ AMBER = "#f5c451"
 RED = "#ff6b6b"
 MUTED = "#7d8499"
 
-INTERVALS = {"30 秒": 30, "60 秒": 60, "2 分钟": 120, "5 分钟": 300,
-             "10 分钟": 600, "30 分钟": 1800}
+INTERVALS = {"10 秒": 10, "30 秒": 30, "60 秒": 60, "2 分钟": 120,
+             "5 分钟": 300, "10 分钟": 600, "30 分钟": 1800}
+MIN_INTERVAL = 1
+MAX_INTERVAL = 3600      # 60 分钟
 
 
 def level_color(percent: int) -> str:
@@ -111,10 +114,43 @@ def copy_to_clipboard(text: str, widget=None) -> bool:
 
 
 def interval_label(seconds: int) -> str:
+    """把秒数显示为标签；预设值用原标签，自定义值 >60s 自动转分钟。"""
+    seconds = max(MIN_INTERVAL, min(MAX_INTERVAL, int(seconds)))
     for label, value in INTERVALS.items():
         if value == seconds:
             return label
-    return "60 秒"
+    if seconds <= 60:
+        return f"{seconds} 秒"
+    minutes = round(seconds / 60.0, 2)
+    return f"{minutes:g} 分钟"
+
+
+def parse_interval(text: str) -> int | None:
+    """解析间隔输入：纯数字按秒；支持「N 秒 / N 分钟」；限制 1s~60min。
+
+    返回规整后的秒数；输入非法时返回 None（调用方保留原值并提示）。
+    """
+    if text is None:
+        return None
+    raw = str(text).strip()
+    if not raw:
+        return None
+    if raw in INTERVALS:
+        return INTERVALS[raw]
+    m = re.fullmatch(r"(\d+(?:\.\d+)?)\s*(秒|分钟|分|s|m)?", raw,
+                     flags=re.IGNORECASE)
+    if not m:
+        return None
+    try:
+        value = float(m.group(1))
+    except ValueError:
+        return None
+    unit = (m.group(2) or "秒").lower()
+    seconds = value * 60 if unit in ("分钟", "分", "m") else value
+    seconds = int(round(seconds))
+    if not (MIN_INTERVAL <= seconds <= MAX_INTERVAL):
+        return None
+    return seconds
 
 
 # --------------------------------------------------------------------------
@@ -575,7 +611,8 @@ class BatteryPanel(tk.Tk):
         if self._closing or self.demo or not self.auto_var.get():
             return
         seconds = int(tc.load_config().get("interval", 60) or 60)
-        self._after_id = self._later(max(10, seconds) * 1000, self.refresh)
+        self._after_id = self._later(
+            max(MIN_INTERVAL, min(MAX_INTERVAL, seconds)) * 1000, self.refresh)
 
     # ------------------------------------------------------------- 托盘
     def _update_tray_button(self):
@@ -1012,11 +1049,16 @@ class SettingsWindow(tk.Toplevel):
                  font=("Microsoft YaHei UI", 9)).pack(side="left")
         self.interval_var = tk.StringVar(
             value=interval_label(int(tc.load_config().get("interval", 60) or 60)))
-        combo = ttk.Combobox(row, textvariable=self.interval_var, width=8,
-                             values=list(INTERVALS), state="readonly",
+        combo = ttk.Combobox(row, textvariable=self.interval_var, width=10,
+                             values=list(INTERVALS),
                              font=("Microsoft YaHei UI", 9))
         combo.pack(side="left", padx=(8, 0))
         combo.bind("<<ComboboxSelected>>", lambda _e: self._interval_changed())
+        # 直接输入秒数后回车/失焦即生效；数字单位=秒，>60s 自动转分钟显示
+        combo.bind("<Return>", lambda _e: self._interval_changed())
+        combo.bind("<FocusOut>", lambda _e: self._interval_changed())
+        tk.Label(row, text="（可输入秒数 1~3600）", bg=BG, fg=FAINT,
+                 font=("Microsoft YaHei UI", 8)).pack(side="left", padx=(6, 0))
 
         # 窗口按钮行为
         win_box = tk.LabelFrame(body, text=" 标题栏按钮 ", bg=BG, fg=SUB, bd=0,
@@ -1245,8 +1287,22 @@ class SettingsWindow(tk.Toplevel):
             fg=GREEN)
 
     def _interval_changed(self):
-        seconds = INTERVALS.get(self.interval_var.get(), 60)
+        seconds = parse_interval(self.interval_var.get())
+        if seconds is None:
+            # 非法输入：恢复成当前配置值并提示范围
+            current = int(tc.load_config().get("interval", 60) or 60)
+            self.interval_var.set(interval_label(current))
+            messagebox.showinfo(
+                "刷新间隔无效",
+                "请输入 1~3600 的秒数，或选择下拉选项\n（3600 秒 = 60 分钟）。",
+                parent=self)
+            return
+        # 数字输入按秒解释；>60s 显示自动转分钟
+        label = interval_label(seconds)
+        self.interval_var.set(label)
         cfg = tc.load_config()
+        if cfg.get("interval") == seconds:
+            return                      # 没变化就不重载托盘定时器
         cfg["interval"] = seconds
         tc.save_config(cfg)
         tc.post_to_tray(tc.MSG_RELOAD)
