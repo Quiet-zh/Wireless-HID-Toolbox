@@ -56,10 +56,10 @@ build_exe.bat 2
 
 - `main.py` 统一入口
 - `app.ico` 图标
-- `version_info.txt` Windows 版本资源（当前 v1.24.0）
+- `version_info.txt` Windows 版本资源（当前 v1.25.0）
 - `--optimize 2`
 - 排除 unittest/doctest/pydoc/pdb/test
-- 隐藏导入：面板、托盘、鼠标键盘测试、HID 调试台、主题、协议模块
+- 隐藏导入：面板、托盘、鼠标键盘测试、HID 调试台、鼠标按键映射、语音组件、主题、协议模块
 
 ## 可选：把识别引擎一起打包
 
@@ -87,7 +87,8 @@ build_exe.bat
 ## exe 行为
 
 - 双击 exe 默认打开主显示界面
-- 工具通过 `exe --tool mouse-test` / `--tool hid-debug` / `--tool tray` 打开
+- 工具通过 `exe --tool mouse-test` / `--tool hid-debug` / `--tool mouse-map` /
+  `--tool mouse-remap` / `--tool tray` 打开
 - 开机自启、桌面入口在 exe 模式下指向 exe 本身
 - 设置中的测试/调试工具不依赖外部 `.py`
 
@@ -97,9 +98,10 @@ build_exe.bat
 dist\WirelessHIDToolbox.exe
 dist\WirelessHIDToolbox.exe --tool mouse-test
 dist\WirelessHIDToolbox.exe --tool hid-debug
+dist\WirelessHIDToolbox.exe --tool mouse-map
 ```
 
-- [ ] 标题显示 `外设电量 v1.24.0`
+- [ ] 标题显示 `外设电量 v1.25.0`
 - [ ] 主面板、设置、协议表可打开
 - [ ] 鼠标键盘测试和 HID 调试台可打开
 - [ ] 托盘启动/退出正常

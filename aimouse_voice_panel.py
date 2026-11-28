@@ -8,28 +8,24 @@
 * **实时区域**：录制中显示音量与实时识别文字
 * **设置**：参数名 + 中文描述 + 输入框 + 加减按钮，点「保存」才生效
 
-语音识别使用可选的 Vosk 离线引擎（`pip install vosk` + 中文模型），
-未安装时自动降级为「仅录音」，不影响其他功能。
+语音监听 / 解码 / 识别 / 键入的核心实现已经抽到独立组件
+``voice_service.py``（不依赖 Tk）；本模块只保留窗口与交互。
 """
 from __future__ import annotations
 
-import json
 import os
 import queue
-import re
 import sys
 import threading
 import time
 import tkinter as tk
 import wave
-from tkinter import filedialog, messagebox, ttk
+from tkinter import filedialog, messagebox
 from typing import Optional
 
 import aimouse_voice as av
-import aimouse_voice_capture as avc
-import hid_win as hw
 import theme
-import tray_common as tc
+import voice_service as vs
 import voice_typing as vt
 from ui_common import attach_auto_scrollbar
 
@@ -45,96 +41,44 @@ AMBER = "#f5c451"
 RED = "#ff6b6b"
 MUTED = "#7d8499"
 
-CONFIG_PATH = os.path.join(tc.RUNTIME_DIR, "voice_config.json")
-DEFAULT_MODEL = os.path.join(tc.RUNTIME_DIR, "models", "vosk-model-small-cn-0.22")
-BIG_MODEL_DIR = os.path.join(tc.RUNTIME_DIR, "models", "vosk-model-cn-0.22")
-# sherpa-onnx 模型根目录：其下自动探测 streaming-paraformer / sense-voice
-DEFAULT_SHERPA_ROOT = os.path.join(tc.RUNTIME_DIR, "models")
-DEFAULT_SAVE = os.path.join(tc.RUNTIME_DIR, "voice")
+# 语音核心参数与路径都来自独立组件；这里保留同名常量，历史调用与测试
+# （patch avp.CONFIG_PATH / avp.PARAM_DEFS）无需改动。
+CONFIG_PATH = vs.CONFIG_PATH
+DEFAULT_MODEL = vs.DEFAULT_MODEL
+BIG_MODEL_DIR = vs.BIG_MODEL_DIR
+DEFAULT_SHERPA_ROOT = vs.DEFAULT_SHERPA_ROOT
+DEFAULT_SAVE = vs.DEFAULT_SAVE
+PARAM_DEFS = vs.PARAM_DEFS
+DEFAULTS = vs.DEFAULTS
+_MODEL_CACHE = vs._MODEL_CACHE
 
-# Vosk 模型按目录全局缓存：大模型首次加载需 30~50 秒，
-# 重开窗口 / 保存设置 / 开始监测都不应重复加载。
-_MODEL_CACHE: dict[str, object] = {}
-_MODEL_LOCK = threading.Lock()
-_VOSK_QUIET = False
+# 供测试与旧调用使用的实现在 voice_service；这里做薄封装/别名。
+AsrEngine = vs.AsrEngine
+Recorder = vs.Recorder
+make_asr_engine = vs.make_asr_engine
+asr_engine_key = vs.asr_engine_key
+onset_kwargs = vs.onset_kwargs
+_quiet_vosk = vs._quiet_vosk
 
 
 def normalize_asr_text(text: str) -> str:
-    """规整识别结果：去掉中文词之间的空格，英文单词间空格保留。
-
-    实现在 :func:`aimouse_voice.normalize_asr_text`（Vosk / sherpa 共用），
-    这里保留同名函数，历史调用与测试无需改动。
-    """
-    return av.normalize_asr_text(text)
+    """规整识别结果：去掉中文词之间的空格，英文单词间空格保留。"""
+    return vs.normalize_asr_text(text)
 
 
-def _quiet_vosk() -> None:
-    """Kaldi/Vosk 默认往 stderr 打大量模型加载日志，静音一次即可。"""
-    global _VOSK_QUIET
-    if _VOSK_QUIET:
-        return
-    try:
-        from vosk import SetLogLevel
-        SetLogLevel(-1)
-        _VOSK_QUIET = True
-    except (KeyboardInterrupt, Exception):
-        pass
+def load_config() -> dict:
+    """读取语音配置；CONFIG_PATH 保留为模块级变量以便测试 patch。"""
+    return vs.load_config(CONFIG_PATH)
 
-# (键, 参数名, 中文描述, 默认值, 最小, 最大, 步长, 类型)
-PARAM_DEFS = [
-    ("highpass", "高通截止频率", "去除低频轰鸣；0 表示关闭，单位 Hz",
-     150, 0, 1000, 10, "int"),
-    ("peak", "归一化峰值", "输出音量上限；越小越不容易削波",
-     26000, 1000, 32000, 1000, "int"),
-    ("denoise", "降噪强度", "0 关闭；越大越干净，但可能有回音；需 noisereduce",
-     0, 0, 100, 5, "int"),
-    ("auto_transcribe", "自动转文字", "录制结束后自动识别（1 开 / 0 关）",
-     1, 0, 1, 1, "bool"),
-    ("stream_asr", "流式转文字", "1=边说边转（实时显示）；0=松开语音键后整段识别一次",
-     1, 0, 1, 1, "bool"),
-    ("asr_refine", "收尾高精度校正",
-     "1=松手后用 SenseVoice 再识别一次定稿（约 0.2 秒，更准、带标点）；0=只用流式结果",
-     1, 0, 1, 1, "bool"),
-    ("onset_gate", "前导静音门控",
-     "1=按能量裁掉开头底噪再识别（句首不再「听出」假字）；0=原样送引擎",
-     1, 0, 1, 1, "bool"),
-    ("onset_factor", "门控灵敏度",
-     "底噪的多少倍算开始说话（单位 0.1 倍：35=3.5 倍）；越大裁得越多，太大可能削掉轻声",
-     35, 10, 100, 5, "int"),
-    ("max_seconds", "单次最长录制", "超过该秒数自动结束并保存",
-     30, 5, 120, 5, "int"),
-    ("monitor_on_close", "关闭界面后仍监测",
-     "1=关闭语音窗口后继续监听语音键（窗口隐藏，点🎤可再打开）；0=关闭即停止监测",
-     0, 0, 1, 1, "bool"),
-    ("save_audio", "保存语音文件", "1=录音保存为 WAV；0=只转文字不保存",
-     1, 0, 1, 1, "bool"),
-    ("save_dir", "音频保存目录", "录制文件存放位置（保存语音开启时有效）",
-     DEFAULT_SAVE, None, None, None, "path"),
-    ("model_dir", "识别模型目录", "Vosk 中文模型所在目录",
-     DEFAULT_MODEL, None, None, None, "path"),
-    ("asr_engine", "识别引擎", "0 自动(sherpa优先) 1 强制sherpa 2 仅Vosk",
-     0, 0, 2, 1, "int"),
-    ("sherpa_model_dir", "sherpa模型目录",
-     "含 streaming-paraformer / sense-voice 子目录的根目录（自动探测）",
-     DEFAULT_SHERPA_ROOT, None, None, None, "path"),
-    ("asr_backend", "识别后端", "0 自动(本地优先) 1 仅Vosk 2 剪贴板 3 云端",
-     0, 0, 3, 1, "int"),
-    ("local_only", "纯本地模式", "1=只用本地 Vosk，完全不联网/不读剪贴板；0=按识别后端设置",
-     1, 0, 1, 1, "bool"),
-    ("voice_typing", "语音输入到焦点", "1=识别后把文字键入当前焦点输入框；说话前请先点好目标输入框",
-     0, 0, 1, 1, "bool"),
-    ("asr_grammar", "识别词表(可选)", "逗号分隔的候选词；留空=通用识别，填了可显著提升固定命令准确率",
-     "", None, None, None, "text"),
-]
 
-DEFAULTS = {d[0]: d[3] for d in PARAM_DEFS}
+def save_config(cfg: dict) -> None:
+    vs.save_config(cfg, CONFIG_PATH)
 
 
 def themed(color: str) -> str:
     if theme.current() == "light":
         return theme.PANEL_LIGHT.get(color.lower(), color)
     return color
-
 
 # ---------------------------------------------------------------------------
 # 剪贴板桥接（兜底后端：复用官方驱动的识别结果，零依赖）
@@ -193,382 +137,6 @@ def wait_clipboard_result(before: int, timeout: float = 2.0) -> str:
                 return text
         time.sleep(0.05)
     return ""
-
-
-# ---------------------------------------------------------------------------
-# 配置
-# ---------------------------------------------------------------------------
-def load_config() -> dict:
-    cfg = dict(DEFAULTS)
-    try:
-        with open(CONFIG_PATH, "r", encoding="utf-8") as fh:
-            data = json.load(fh)
-        if isinstance(data, dict):
-            for key in DEFAULTS:
-                if key in data:
-                    cfg[key] = data[key]
-    except Exception:
-        pass
-    return cfg
-
-
-def save_config(cfg: dict) -> None:
-    os.makedirs(os.path.dirname(CONFIG_PATH), exist_ok=True)
-    tmp = CONFIG_PATH + ".tmp"
-    with open(tmp, "w", encoding="utf-8") as fh:
-        json.dump(cfg, fh, ensure_ascii=False, indent=2)
-    os.replace(tmp, CONFIG_PATH)
-
-
-# ---------------------------------------------------------------------------
-# 语音识别（可选）
-# ---------------------------------------------------------------------------
-class AsrEngine:
-    """Vosk 离线识别封装；不可用时全部返回 None。"""
-
-    def __init__(self, model_dir: str, grammar: str = ""):
-        self.model_dir = model_dir
-        self.grammar = grammar or ""
-        self._model = None
-        self._rec = None
-        self._gate = None            # 前导静音门控（begin 时创建）
-        self._lock = threading.Lock()
-        self.error = ""
-        # 前导静音门控参数：面板按设置写入；None 表示不启用
-        self.onset_kwargs: Optional[dict] = {}
-
-    def available(self) -> bool:
-        try:
-            import vosk  # noqa: F401
-        except KeyboardInterrupt:
-            # Ctrl+C 恰好落在模块导入锁上（后台线程首次 import vosk 较慢）：
-            # 视为用户中断，安静返回，不让 KeyboardInterrupt 冒泡到 Tk 回调
-            self.error = "已中断"
-            return False
-        except Exception:
-            self.error = "未安装 vosk"
-            return False
-        _quiet_vosk()
-        if not os.path.isdir(self.model_dir):
-            self.error = "模型目录不存在"
-            return False
-        return True
-
-    def _ensure_model(self):
-        if self._model is None:
-            with _MODEL_LOCK:
-                model = _MODEL_CACHE.get(self.model_dir)
-                if model is None:
-                    _quiet_vosk()
-                    from vosk import Model
-                    model = Model(self.model_dir)
-                    _MODEL_CACHE[self.model_dir] = model
-                self._model = model
-        return self._model
-
-    def preload(self, stream: Optional[bool] = None) -> bool:
-        """后台预热模型；避免录音开始时才加载（大模型尤其明显）。
-
-        ``stream`` 参数仅为与 sherpa 引擎接口对齐，Vosk 只有一个模型，
-        忽略该参数。
-        """
-        if not self.available():
-            return False
-        try:
-            self._ensure_model()
-            return True
-        except Exception as exc:
-            self.error = str(exc)
-            return False
-
-    def _grammar_supported(self) -> bool:
-        """Vosk 完整版大模型不支持 runtime grammar，仅 small 系列可用。"""
-        return "small" in os.path.basename(
-            os.path.normpath(self.model_dir)).lower()
-
-    @property
-    def name(self) -> str:
-        """引擎标识，与 sherpa 引擎保持一致。"""
-        return "vosk"
-
-    @property
-    def label(self) -> str:
-        return "Vosk"
-
-    def grammar_supported(self) -> bool:
-        """供面板统一查询；sherpa 引擎同名方法固定返回 False。"""
-        return self._grammar_supported()
-
-    def _make_rec(self, KaldiRecognizer):
-        """构造识别器；设置了词表且模型支持时启用 Vosk grammar 约束。"""
-        model = self._ensure_model()
-        words = [w for w in re.split(r"[,，\s]+", self.grammar.strip()) if w]
-        if words and self._grammar_supported():
-            return KaldiRecognizer(
-                model, av.SAMPLE_RATE,
-                json.dumps(words + ["[unk]"], ensure_ascii=False))
-        return KaldiRecognizer(model, av.SAMPLE_RATE)
-
-    def begin(self) -> bool:
-        """开始一次流式识别。"""
-        if not self.available():
-            return False
-        try:
-            from vosk import KaldiRecognizer
-            self._rec = self._make_rec(KaldiRecognizer)
-            self._gate = (av.OnsetGate(**self.onset_kwargs)
-                          if self.onset_kwargs is not None else None)
-            return True
-        except Exception as exc:
-            self.error = str(exc)
-            return False
-
-    def feed(self, pcm: bytes) -> None:
-        """喂一段 PCM（每秒数百次，只投递不解析，避免重复 JSON 解码）。
-
-        前导静音先由 :class:`aimouse_voice.OnsetGate` 拦下：设备按下语音键
-        后有 1 秒多纯底噪，喂给模型会让句首「听出」不存在的字。
-        """
-        with self._lock:
-            if self._rec is None:
-                return
-            gate = getattr(self, "_gate", None)
-            data = gate.push(pcm) if gate is not None else pcm
-            if not data:
-                return
-            try:
-                self._rec.AcceptWaveform(data)
-            except Exception:
-                pass
-
-    def partial(self) -> str:
-        """取当前部分识别结果；由 UI 以约 10Hz 节流调用。"""
-        with self._lock:
-            if self._rec is None:
-                return ""
-            try:
-                return normalize_asr_text(
-                    json.loads(self._rec.PartialResult()).get("partial", ""))
-            except Exception:
-                return ""
-
-    def finish(self) -> str:
-        with self._lock:
-            if self._rec is None:
-                return ""
-            # 门控还没打开（说话太轻/太短）时先把缓冲补喂，否则等于没输入
-            gate = self._gate
-            if gate is not None and not gate.opened:
-                rest = gate.flush()
-                if rest:
-                    try:
-                        self._rec.AcceptWaveform(rest)
-                    except Exception:
-                        pass
-            try:
-                text = normalize_asr_text(
-                    json.loads(self._rec.FinalResult()).get("text", ""))
-            except Exception:
-                text = ""
-            self._rec = None
-            self._gate = None
-            return text
-
-    def transcribe_samples(self, samples: list[int]) -> Optional[str]:
-        """对内存中的 PCM 样本做一次性识别（不保存 WAV 时使用）。"""
-        if not self.available() or not samples:
-            return None
-        try:
-            from vosk import KaldiRecognizer
-            rec = self._make_rec(KaldiRecognizer)
-            # 前导静音必须裁掉，否则句首容易被识别成不存在的字
-            pcm = av.samples_to_pcm16(av.trim_leading_silence(samples))
-            for i in range(0, len(pcm), 4000):
-                rec.AcceptWaveform(pcm[i:i + 4000])
-            return normalize_asr_text(
-                json.loads(rec.FinalResult()).get("text", ""))
-        except Exception as exc:
-            self.error = str(exc)
-            return None
-
-    def transcribe_file(self, wav_path: str) -> Optional[str]:
-        """对已有 WAV 做一次性识别。"""
-        if not self.available():
-            return None
-        try:
-            from vosk import KaldiRecognizer
-            rec = self._make_rec(KaldiRecognizer)
-            with wave.open(wav_path, "rb") as fh:
-                raw = fh.readframes(fh.getnframes())
-            # 同上：只裁整段开头的前导静音
-            pcm = av.trim_pcm(raw)
-            for i in range(0, len(pcm), 4000):
-                rec.AcceptWaveform(pcm[i:i + 4000])
-            return normalize_asr_text(
-                json.loads(rec.FinalResult()).get("text", ""))
-        except Exception as exc:
-            self.error = str(exc)
-            return None
-
-
-def make_asr_engine(cfg: dict):
-    """按配置创建识别引擎，sherpa 不可用时自动回退 Vosk。
-
-    ``asr_engine``：0 自动（sherpa 优先）/ 1 强制 sherpa / 2 仅 Vosk。
-    强制 sherpa 但依赖或模型缺失时仍回退 Vosk，并把原因写进 ``error``，
-    界面上能直接看到「为什么没用上 sherpa」，不会静默降级。
-    """
-    prefer = int(cfg.get("asr_engine", 0) or 0)
-    model_dir = cfg.get("model_dir", DEFAULT_MODEL)
-    grammar = cfg.get("asr_grammar", "")
-    if prefer in (0, 1):
-        root = cfg.get("sherpa_model_dir") or DEFAULT_SHERPA_ROOT
-        try:
-            import aimouse_sherpa_asr as sasr
-        except Exception as exc:      # 模块本身出问题也不能拖垮语音
-            sasr = None
-            sherpa_error = "无法导入 aimouse_sherpa_asr：%s" % exc
-        else:
-            eng = sasr.SherpaAsrEngine(root, grammar)
-            if eng.available():
-                return eng
-            sherpa_error = eng.error or "不可用"
-        fallback = AsrEngine(model_dir, grammar)
-        if prefer == 1:
-            fallback.error = "sherpa %s，已回退 Vosk" % sherpa_error
-        else:
-            # 自动模式：不算错误，但记下原因，界面提示可下载模型提升准确率
-            fallback.sherpa_hint = sherpa_error
-        return fallback
-    return AsrEngine(model_dir, grammar)
-
-
-def asr_engine_key(cfg: dict) -> tuple:
-    """配置指纹：变了才重建引擎，避免每次保存设置都重新加载模型。"""
-    return (int(cfg.get("asr_engine", 0) or 0),
-            cfg.get("model_dir", DEFAULT_MODEL),
-            cfg.get("sherpa_model_dir") or DEFAULT_SHERPA_ROOT,
-            cfg.get("asr_grammar", ""))
-
-
-def onset_kwargs(cfg: dict):
-    """把设置里的门控参数翻译成 :class:`aimouse_voice.OnsetGate` 的入参。
-
-    ``onset_gate=0`` 返回 None，引擎据此完全不裁剪。
-    ``onset_factor`` 用整数存 0.1 倍（25 表示底噪的 2.5 倍），
-    方便复用现有「输入框 + 加减按钮」的参数行。
-    """
-    if not int(cfg.get("onset_gate", 1) or 0):
-        return None
-    try:
-        factor = int(cfg.get("onset_factor", 35) or 35) / 10.0
-    except (TypeError, ValueError):
-        factor = av.ONSET_FLOOR_FACTOR
-    return {"floor_factor": max(1.0, min(factor, 10.0))}
-
-
-# ---------------------------------------------------------------------------
-# 录制线程
-# ---------------------------------------------------------------------------
-class Recorder(threading.Thread):
-    """监听 0xFF91：录音开始/结束由 05 62 / 05 63 状态帧驱动。"""
-
-    def __init__(self, events: queue.Queue, max_seconds: int = 30):
-        super().__init__(daemon=True, name="aimouse-recorder")
-        self.events = events
-        self.max_seconds = max_seconds
-        self._stop = threading.Event()
-        self._recording = False
-        self._frames: list[bytes] = []
-        self._start_ts = 0.0
-        self._last_ts = 0.0
-        self._finish_at = 0.0      # 按键抬起后的延迟收尾时间戳
-        self._cooldown_until = 0.0  # 收尾后的静默期，忽略尾部音频帧
-
-    def stop(self) -> None:
-        self._stop.set()
-
-    def _finish(self, reason: str = "", now: float | None = None) -> None:
-        if not self._recording:
-            return
-        when = time.monotonic() if now is None else now
-        self._recording = False
-        frames = self._frames
-        self._frames = []
-        self._cooldown_until = when + 0.5
-        dur = when - self._start_ts
-        self.events.put(("segment", frames, dur, reason))
-
-    def note_key(self, arg: int, now: float) -> None:
-        """记录「长按抬起」：安排 150ms 后收尾，不再等设备补发状态帧。"""
-        if arg in (0x38, 0x32) and self._recording and not self._finish_at:
-            self._finish_at = now + 0.15
-
-    def _check_finish(self, now: float) -> None:
-        """收尾判定，必须在每轮循环开头调用（音频帧分支会 continue）。"""
-        if self._finish_at and now >= self._finish_at:
-            self._finish("按键抬起", now)
-            self._finish_at = 0.0
-        elif self._recording:
-            if now - self._last_ts > 0.6:
-                self._finish("音频中断", now)
-            elif now - self._start_ts > self.max_seconds:
-                self._finish("达到时长上限", now)
-
-    def _on_audio_frame(self, data: bytes, now: float) -> None:
-        """处理一条 0x1B 音频帧；必要时自动进入录制。"""
-        if not self._recording:
-            # 兜底：部分模式设备直接推音频帧、不补 0x05/0x62 开始帧；
-            # 收尾后 0.5s 内的尾部帧忽略，避免反复开录
-            if now < self._cooldown_until:
-                return
-            self._recording = True
-            self._frames = []
-            self._start_ts = now
-            self._finish_at = 0.0
-            self.events.put(("start", None))
-        self._frames.append(data)
-        self._last_ts = now
-        self.events.put(("audio", data))
-
-    def run(self) -> None:
-        iface = avc.find_interface()
-        if iface is None:
-            self.events.put(("error", "没有找到 248A:60AB 的 0xFF91 接口"))
-            return
-        try:
-            with hw.HidDevice(iface.path, write=False) as dev:
-                while not self._stop.is_set():
-                    now = time.monotonic()
-                    # 收尾判定必须放在循环开头：音频帧分支会 continue，
-                    # 若放在末尾，设备持续发 0x1B 帧时永远检查不到。
-                    self._check_finish(now)
-                    report = dev.read_input(timeout_ms=80)
-                    if report:
-                        data = bytes(report)
-                        if data[:1] == b"\x1b":
-                            self._on_audio_frame(data, now)
-                            continue
-                        if len(data) >= 4 and data[:2] == b"\x0c\x4d":
-                            cmd, arg = data[2], data[3]
-                            if cmd == 0x05 and arg == 0x62:
-                                if not self._recording:
-                                    self._recording = True
-                                    self._frames = []
-                                    self._start_ts = now
-                                    self._last_ts = now
-                                    self._finish_at = 0.0
-                                    self.events.put(("start", None))
-                            elif cmd == 0x05 and arg == 0x63:
-                                self._finish(now=now)
-                                self._finish_at = 0.0
-                            elif cmd == 0x04:
-                                self.events.put(("key", arg))
-                                self.note_key(arg, now)
-        except Exception as exc:
-            self.events.put(("error", "录音线程异常: %r" % exc))
-        finally:
-            self._finish("监测结束")
 
 
 # ---------------------------------------------------------------------------

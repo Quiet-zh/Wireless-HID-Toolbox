@@ -1,6 +1,6 @@
 # Wireless HID Toolbox（2.4G 外设工具箱）
 
-当前版本：**v1.20.1**（更新记录见 [CHANGELOG.md](CHANGELOG.md)）
+当前版本：**v1.25.0**（更新记录见 [CHANGELOG.md](CHANGELOG.md)）
 
 Windows 10/11 的 2.4G 无线外设电量与 HID 调试工具箱。纯 Python 标准库 +
 `ctypes` + `tkinter`，运行时不依赖任何第三方库。
@@ -36,6 +36,10 @@ Windows 10/11 的 2.4G 无线外设电量与 HID 调试工具箱。纯 Python �
 - **刷新间隔**：设置里可下拉选（含新增的 10 秒）或直接输入秒数
   （1~3600 秒）；输入超过 60 秒后显示自动转为分钟（90 → 「1.5 分钟」）
 - **测试**：鼠标键盘测试，多设备切换监听、按键/移动/滚轮/坐标/点击统计
+- **鼠标按键映射**：拦截任意已连接鼠标的物理按键，改为触发鼠标功能 /
+  键盘组合 / **系统动作（前进后退、媒体控制、音量等 31 项预设）** /
+  打开应用 / 组合事件 / 宏定义 / 语音输入；每台鼠标独立开关，
+  界面增删改即时保存，后台守护进程热重载（见「鼠标按键映射」）
 - **调试**：完整 HID 调试台（Feature / Output / Input / 探 ID / 手动标定）
 - **UI 约定**：所有纵向/横向滚动条仅在内容超出对应可视区域时显示
   （`ui_common.AutoScrollbar`），内容未超出时隐藏、不占位
@@ -47,6 +51,7 @@ Windows 10/11 的 2.4G 无线外设电量与 HID 调试工具箱。纯 Python �
 
 - [更新记录](CHANGELOG.md)
 - [能力总览](docs/CAPABILITIES.md)：一页速查全部能力、依赖矩阵、参数表与验证命令
+- [鼠标按键映射](docs/MOUSE_MAPPING.md)：界面、事件类型、后台进程、配置与限制
 - [诊断工具](tools/README.md)：抓 0xFF91 帧序列、独立验证解码链路
 - [打包说明](docs/PACKAGING.md)：onefile 默认、onedir 选择、产物与排错
 - [主题说明](docs/THEME.md)：白天/黑夜配色与新增颜色约定
@@ -114,6 +119,8 @@ python main.py                    :: 主界面（默认）
 python main.py --version          :: 版本号
 python main.py --tool tray        :: 托盘
 python main.py --tool mouse-test  :: 鼠标键盘测试
+python main.py --tool mouse-map   :: 鼠标按键映射界面
+python main.py --tool mouse-remap :: 按键映射后台（--status/--stop/--diagnose）
 python main.py --tool hid-debug   :: HID 调试台
 
 python my_devices.py --once       :: 两台本机设备读一次
@@ -165,7 +172,8 @@ onedir:  dist\WirelessHIDToolbox\WirelessHIDToolbox.exe
 - 所有卡片统一字段：**连接 / 充电 / 电压 / 数据源**
 - 大号百分比 + 进度条；休眠时显示灰色上次电量 + 上次更新时间
 - 底部：**立即刷新 / 自动刷新 / 常驻托盘**
-- 右上角：**☀ 白天 / 🌙 黑夜** 主题切换，配置持久化；已打开的工具窗口自动跟随
+- 右上角：**🖱 按键映射**、**⚙ 设置**、**☀ 白天 / 🌙 黑夜** 主题切换；
+  主题配置持久化，已打开的工具窗口自动跟随
   （实现与配色约定见 [docs/THEME.md](docs/THEME.md)）
 - ⚙ 设置 → **标题栏按钮**：
   - 最小化（-）：最小化到托盘 / 正常收起窗口（任务栏仍保留应用图标）
@@ -186,7 +194,7 @@ onedir:  dist\WirelessHIDToolbox\WirelessHIDToolbox.exe
 - 标题栏按钮：最小化（-）/ 关闭（×）行为
 - 开机自启、创建桌面链接
 - 刷新间隔：30 秒–30 分钟
-- 工具：扫描全部、协议表、鼠标键盘测试、HID 调试台、项目目录、配置目录
+- 工具：扫描全部、协议表、鼠标键盘测试、鼠标按键映射、HID 调试台、项目目录、配置目录
 
 设备类型、删除/恢复与配置字段见 [docs/DEVICE_CONFIG.md](docs/DEVICE_CONFIG.md)。
 
@@ -231,6 +239,33 @@ python mouse_test_gui.py --demo
 - 只显示，不记录、不落盘
 
 ![键盘全配列测试](docs/keyboard_test.png)
+
+## 鼠标按键映射
+
+主界面右上角 **🖱 按键映射**（或设置 → 工具）。左侧选择任意已连接鼠标，
+右侧启用该鼠标、添加/修改/删除按键绑定：
+
+| 按键 | 触发 | 事件类型 |
+| --- | --- | --- |
+| 左/右/中键、侧键 1/2、滚轮上/下 | 按下 / 按住 | 鼠标功能、键盘组合、**系统动作**、打开应用、组合事件、宏定义、语音输入 |
+
+- **拦截**：`WH_MOUSE_LL` 吞掉原事件，再用 `SendInput` 发送配置的动作；
+  Raw Input 负责区分 `VID:PID`，多鼠标时按设备决定是否拦截
+- **保存**：写入 `%APPDATA%\ExtBatteryTray\mouse_map.json`；后台守护进程
+  轮询 mtime 热重载。配置窗口打开期间自动暂停，关闭后恢复
+- **组合键**：`ctrl+c`、`ctrl+shift+esc`、`alt+f4`、`win+r`，也可直接按键捕获
+- **系统动作**：31 项预设，选一下就行——后退 / 前进 / 刷新、播放暂停 /
+  上一曲 / 下一曲、音量加减 / 静音、显示桌面 / 切换窗口 / 任务管理器 /
+  截图 / 锁屏、复制粘贴等编辑快捷键、标签页开关。媒体与浏览器键走**扩展键**
+  （`KEYEVENTF_EXTENDEDKEY`，否则前台程序收不到），编辑类走标准快捷键
+- **组合事件 / 宏定义**：按键/鼠标/打开应用/等待/输入文字按顺序执行，每步可设延迟
+- **语音输入**：只能绑定魔声 `248A:60AB` 的**语音键**（0xFF91 音频帧只在按住
+  语音键时上报；其他按键不会让鼠标开始收音）。按住说话、松开后识别并键入焦点输入框
+- 语音监听已抽成独立组件 `voice_service.py`（不依赖 Tk），语音窗口与鼠标映射共用
+- 后台进程：`python main.py --tool mouse-remap --status / --stop / --diagnose`；
+  面板与托盘启动时会按配置自动拉起，完全退出应用时停止
+
+完整界面说明、配置格式与多鼠标限制见 [鼠标按键映射](docs/MOUSE_MAPPING.md)。
 
 ## 语音解码（魔声 AI 垂直鼠标）· 纯本地
 
@@ -547,6 +582,9 @@ python app.py
 ```text
 %APPDATA%\ExtBatteryTray\config.json
 %APPDATA%\ExtBatteryTray\last_<key>.json
+%APPDATA%\ExtBatteryTray\mouse_map.json          # 按键映射配置
+%APPDATA%\ExtBatteryTray\mouse_map_status.json   # 后台映射状态
+%APPDATA%\ExtBatteryTray\voice_config.json       # 语音参数
 ```
 
 `config.json` 的 `devices`：
@@ -593,6 +631,8 @@ python tray_app.py --quit
 - **并行扫描**：各设备分组并行读；面板用 `fast=True` 短超时，先展示缓存
 - **跨进程锁**：键盘会话 `Local\ExtBatteryHidReadLock`；整轮扫描
   `Local\ExtBatteryHidScanLock`（短等待）
+- **按键映射**：Raw Input 识别设备 + `WH_MOUSE_LL` 拦截；两者分线程，
+  钩子最多等 12ms 做设备关联，关联失败放行；动作在独立线程串行执行
 - **上次电量**：成功读取写 `last_state`；休眠时回退缓存
 - **面板恢复**：隐藏时写 HWND + 显示请求文件，托盘点击恢复，不重复开窗
 - **不写日志**：默认不产生日志文件，`--debug` 只打印到控制台
@@ -603,7 +643,7 @@ python tray_app.py --quit
 python -m unittest discover -s tests -v
 ```
 
-共 **265** 个用例：
+共 **458** 个用例：
 
 - 8 个鼠标协议/电压曲线
 - 5 个 Raw Input 事件解析
@@ -642,6 +682,9 @@ python -m unittest discover -s tests -v
 - 16 个关闭界面后仍监测（开关判定、隐藏/销毁分支、shutdown 清理、
   召回刷新、面板销毁停录音）
 - 8 个设备目录/类型/删除恢复
+- 52 个鼠标按键映射（配置/校验/组合键/动作/钩子报文/设备关联决策）
+- 14 个语音独立组件（面板复用、推讲会话、精修、无焦点提示）
+- 10 个映射界面（设备列表、语音键行、离线设备、按键捕获、保存）
 - 3 个 104 键布局数据
 - 4 个配置默认值/合并/主题回退
 - 4 个主题配色映射
@@ -669,7 +712,14 @@ python -m unittest discover -s tests -v
 - 仅 Windows 10/11；依赖 Win32 HID / Raw Input
 - 未知厂商协议仍需抓包确认；加密/私有握手需要逆向
 - ZOWIE 双接口、MCHOSE A5/A7/gmouse 等尚未逐台真机验证
-- 不做设置写入、不改 DPI / 灯效 / 按键，只读查询
+- 电量侧不做设置写入、不改 DPI / 灯效 / 固件；按键映射只在用户态拦截
+- 按键映射的设备关联是 **Raw Input + Low-Level Hook 的尽力而为方案**：
+  钩子最多等 12ms 关联设备，关联失败时放行原事件（宁可漏一次，不误吞）；
+  多鼠标 + 极低延迟时可能偶发漏映射
+- 管理员权限窗口 / 锁屏 / UAC 安全桌面不接收普通权限钩子与注入；需以管理员
+  身份运行本工具才能覆盖提权窗口
+- 语音输入只能绑定魔声鼠标语音键；语音控制（DSH 新对话）与语音翻译暂缓，
+  后续按免费在线翻译 + `dsh headless` 方案扩展
 
 ## 致谢
 

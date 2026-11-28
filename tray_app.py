@@ -453,6 +453,12 @@ def main(argv=None) -> int:
     tc.write_pid()
 
     try:
+        import mouse_remap
+        mouse_remap.ensure_daemon_if_enabled()
+    except Exception:
+        pass
+
+    try:
         USER32.SetProcessDPIAware()            # 图标不糊
     except Exception:
         pass
@@ -465,6 +471,14 @@ def main(argv=None) -> int:
         return 1
     finally:
         tc.remove_pid()
+        # 托盘退出且没有面板在运行时，后台按键映射也应停止；
+        # 面板还开着则由面板自己管理映射生命周期。
+        try:
+            if not tc.panel_hwnd():
+                import mouse_remap
+                mouse_remap.stop_daemon(wait=2.0)
+        except Exception:
+            pass
 
 
 if __name__ == "__main__":

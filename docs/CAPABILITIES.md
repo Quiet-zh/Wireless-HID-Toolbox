@@ -12,6 +12,7 @@
 | 设备目录 | 登记/删除/恢复/类型、统一字段、托盘逐设备开关 | 无 |
 | HID 调试 | Feature / Output / Input 报告、Report ID 探测、手动标定 | 无 |
 | 鼠标键盘测试 | 多设备切换、按键/移动/滚轮/点击统计、104 键布局 | 无 |
+| **鼠标按键映射** | 拦截物理按键 → 鼠标功能/键盘组合/系统动作（前进后退、媒体、音量等）/打开应用/组合事件/宏/语音输入 | 无（用户态 Hook） |
 | **语音解码** | **纯本地**把 33B 加扰 ADPCM 还原成 16kHz WAV | **无**（零第三方运行时依赖） |
 | 语音转文字 | sherpa-onnx（流式 Paraformer / SenseVoice）/ Vosk / 云端 ASR / 剪贴板桥接，按设置自动降级 | 可选 |
 | 主题 | 白天/黑夜配色 | 无 |
@@ -36,6 +37,9 @@
               │     └─ 引擎：sherpa SenseVoice（默认）/ Vosk
               └─ 可选：voice_typing=1 时把文字键入当前焦点输入框
 ```
+
+> 鼠标按键映射的「语音输入」事件复用同一套组件（`voice_service.VoiceInputService`），
+> 只能绑定魔声语音键；按住说话、松开识别并键入焦点输入框。
 
 实测（1528 帧 / 5.35s）：RMS **8694**、相邻差中位 **521**、饱和 **0.6%**，
 与官方驱动解码的 PCM 波形统计一致。
@@ -102,6 +106,21 @@ Vosk 方案：`vosk-model-small-cn-0.22`（42MB）。
 3.5 倍（选定）→ 0.163；4.5 倍 → 0.165。选 3.5 是因为长静音样本
 （1.46s 底噪）只有在 3.5 倍时才裁得够。
 
+## 3.5 鼠标按键映射速查
+
+| 能力 | 实现 |
+| --- | --- |
+| 识别鼠标 | Raw Input（`VID:PID`、多接口聚合） |
+| 拦截按键 | `WH_MOUSE_LL`，返回 1 吞掉原事件 |
+| 设备关联 | 钩子最多等 12ms，Raw Input 线程送来同一次按键；失败放行 |
+| 动作执行 | 独立线程串行；鼠标/键盘用 `SendInput`，应用用 `os.startfile`/`Popen` |
+| 配置 | `%APPDATA%\ExtBatteryTray\mouse_map.json`，按设备 + 按键存绑定 |
+| 后台 | `mouse_remap_daemon.py`，单实例、mtime 热重载、状态文件 |
+| 语音输入 | 仅魔声 `248A:60AB` 语音键；`voice_service.VoiceInputService` |
+| 暂缓 | 语音控制（DSH 新对话）、语音翻译 |
+
+完整说明见 [MOUSE_MAPPING.md](MOUSE_MAPPING.md)。
+
 ## 4. 语音窗口参数速查
 
 设置（⚙）里共 **19 项**，每项都有输入框；数值项另有左右加减按钮，
@@ -150,7 +169,11 @@ Vosk 方案：`vosk-model-small-cn-0.22`（42MB）。
 | --- | --- |
 | `aimouse_voice.py` | 帧解析、`ADPCM_XOR_MASK`、`decode_frames_local()`、`LocalStreamDecoder`（增量流式解码）、`OnsetGate`/`find_onset`（前导静音门控）、WAV/滤波 |
 | `aimouse_voice_capture.py` | 命令行 HID 采集（`--list` / `--seconds`） |
-| `aimouse_voice_panel.py` | 语音窗口、录制线程、Vosk 封装、`make_asr_engine()` 引擎工厂、剪贴板桥接、设置 UI |
+| `aimouse_voice_panel.py` | 语音窗口（UI）、设置对话框、剪贴板桥接 |
+| `voice_service.py` | **独立语音组件**：`Recorder` / `AsrEngine` / 引擎工厂 / 配置 / `VoiceInputService`（不依赖 Tk） |
+| `mouse_remap.py` | 按键映射配置、校验、组合键、动作执行、Raw Input + Hook 设备关联 |
+| `mouse_mapping_panel.py` | 鼠标按键映射界面（设备列表、绑定编辑、步骤编辑、状态） |
+| `mouse_remap_daemon.py` | 映射后台进程（单实例、热重载、`--status/--stop/--diagnose`） |
 | `aimouse_sherpa_asr.py` | sherpa-onnx 引擎（流式 Paraformer + 整段 SenseVoice），接口对齐 Vosk 封装 |
 | `aimouse_cloud_asr.py` | 官方云端 ASR 协议（可选，`websockets`） |
 | `hid_win.py` | Windows HID 枚举/读写（ctypes） |
@@ -160,7 +183,7 @@ Vosk 方案：`vosk-model-small-cn-0.22`（42MB）。
 | `tools/download_models.py` | 下载 sherpa-onnx 中文模型（hf-mirror，可重跑续传） |
 | `tools/compare_asr.py` | 用真实抓包对比 sherpa / Vosk 的识别结果与耗时 |
 | `docs/AiMouse-RE-Notes.md` | 完整逆向过程、反汇编证据、协议细节 |
-| `tests/` | 382 个自动化用例 |
+| `tests/` | 471 个自动化用例 |
 
 ## 6. 验证与自检
 
@@ -218,3 +241,4 @@ python main.py --version
 | **1.23.0** | **门控改自适应（固定阈值实测不可用）+ 门控开关与灵敏度可调；流式结果再提升到只错 1 字** |
 | 1.23.1 | 修复流式输入 + 收尾精修导致文字输入两遍（发布时误清「已键入内容」） |
 | **1.24.0** | **关闭语音窗口后仍监测（`monitor_on_close`，默认关），隐藏时主面板提示、召回自动刷新列表** |
+| **1.25.0** | **鼠标按键映射（Hook + Raw Input 设备关联、组合事件/宏/语音输入、31 项系统动作）+ 语音组件独立化；DSH 新对话与翻译暂缓** |

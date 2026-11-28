@@ -6,6 +6,7 @@ from unittest import mock
 
 import aimouse_voice_panel as vp
 import main as app_main
+import voice_service as vs
 
 
 class TestVoskImportInterrupt(unittest.TestCase):
@@ -30,14 +31,14 @@ class TestVoskImportInterrupt(unittest.TestCase):
                 raise KeyboardInterrupt
             return real_import(name, *args, **kwargs)
 
-        old = vp._VOSK_QUIET
-        vp._VOSK_QUIET = False
+        old = vs._VOSK_QUIET
+        vs._VOSK_QUIET = False
         try:
             with mock.patch.object(builtins, "__import__", interrupting_import):
                 vp._quiet_vosk()                   # 不应抛
-            self.assertFalse(vp._VOSK_QUIET)
+            self.assertFalse(vs._VOSK_QUIET)
         finally:
-            vp._VOSK_QUIET = old
+            vs._VOSK_QUIET = old
 
 
 class TestEntryInterrupt(unittest.TestCase):

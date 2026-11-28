@@ -144,6 +144,7 @@ ASR 请求 JSON 并提取凭据。`aimouse_cloud_asr.read_driver_credentials()`
 | --- | --- |
 | `aimouse_voice.py` | 33B 帧 → 16kHz PCM、分段、WAV、高通、归一化 |
 | `aimouse_voice_capture.py` | 命令行采集（`--list` / `--seconds` / `--filter`） |
+| `voice_service.py` | 独立语音组件：录制/识别/引擎工厂/配置/`VoiceInputService`（不依赖 Tk，供鼠标按键映射调用） |
 | `aimouse_voice_panel.py` | 主界面语音窗口：监测/列表/播放/删除/转文字/实时区域/设置 |
 | `aimouse_cloud_asr.py` | 云端 ASR 协议（可选 `websockets`）、凭据读取、帧构造与解析 |
 

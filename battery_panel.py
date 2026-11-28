@@ -393,6 +393,11 @@ class BatteryPanel(tk.Tk):
             font=("Microsoft YaHei UI", 9), padx=10, pady=4,
             cursor="hand2")
         self.theme_btn.pack(side="right", padx=(0, 8))
+        tk.Button(head, text="🖱 按键映射", command=self._open_mapping_window,
+                  bg="#242a35", fg=SUB, activebackground="#2d3543",
+                  activeforeground=TEXT, relief="flat", bd=0,
+                  font=("Microsoft YaHei UI", 9), padx=10, pady=4,
+                  cursor="hand2").pack(side="right", padx=(0, 8))
 
         wrap = tk.Frame(self, bg=BG)
         wrap.pack(fill="both", expand=True, padx=14, pady=(4, 0))
@@ -765,6 +770,24 @@ class BatteryPanel(tk.Tk):
         except Exception:
             pass
 
+    def _open_mapping_window(self):
+        """打开鼠标按键映射界面（单实例复用）。"""
+        import mouse_mapping_panel as mmp
+        win = getattr(self, "_map_win", None)
+        if win is not None:
+            try:
+                win.deiconify()
+                win.lift()
+                win.focus_force()
+                return
+            except tk.TclError:
+                self._map_win = None
+        self._map_win = mmp.open_window(
+            self, on_close=self._on_mapping_closed)
+
+    def _on_mapping_closed(self):
+        self._map_win = None
+
     def _open_settings(self):
         SettingsWindow(self, demo=self.demo, on_change=self._settings_changed)
 
@@ -906,6 +929,7 @@ class BatteryPanel(tk.Tk):
                 parent=self):
             return
         self._closing = True
+        self._exiting_all = True          # 映射窗口销毁时不要重新拉起后台
         self._cancel_after()
         self._stop_tools()
         if tc.is_tray_running():
@@ -918,6 +942,13 @@ class BatteryPanel(tk.Tk):
         tc.clear_panel_hwnd(self._hwnd)
         tc.consume_panel_show()
         self.destroy()
+        # 完全退出时连后台按键映射一起停掉；只关配置窗口/最小化到托盘
+        # 不会走到这里，映射继续在后台生效。
+        try:
+            import mouse_remap
+            mouse_remap.stop_daemon()
+        except Exception:
+            pass
 
     def _on_close(self):
         self._closing = True
@@ -1145,6 +1176,7 @@ class SettingsWindow(tk.Toplevel):
             ("查看协议表", self._protocols),
             ("鼠标键盘测试", lambda: self._launch("mouse_test_gui.py")),
             ("HID 调试台", lambda: self._launch("app.py")),
+            ("鼠标按键映射", self.parent._open_mapping_window),
             ("打开项目目录", lambda: os.startfile(BASE_DIR)),
             ("打开配置目录", lambda: os.startfile(tc.RUNTIME_DIR)),
         ]
@@ -1395,6 +1427,11 @@ def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description="外设电量面板")
     parser.add_argument("--demo", action="store_true", help="演示数据预览")
     args = parser.parse_args(argv)
+    try:
+        import mouse_remap
+        mouse_remap.ensure_daemon_if_enabled()
+    except Exception:
+        pass
     app = BatteryPanel(demo=args.demo)
     try:
         app.mainloop()

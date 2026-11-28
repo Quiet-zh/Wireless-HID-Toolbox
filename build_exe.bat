@@ -58,6 +58,10 @@ python -m PyInstaller --noconfirm --clean --%MODE% --noconsole --optimize 2 ^
   --hidden-import tray_app ^
   --hidden-import mouse_test_gui ^
   --hidden-import mouse_events ^
+  --hidden-import mouse_remap ^
+  --hidden-import mouse_remap_daemon ^
+  --hidden-import mouse_mapping_panel ^
+  --hidden-import voice_service ^
   --hidden-import keyboard_view ^
   --hidden-import window_behavior ^
   --hidden-import theme ^
